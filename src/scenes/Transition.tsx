@@ -1,19 +1,17 @@
 import {AbsoluteFill, interpolate, useCurrentFrame} from 'remotion';
+import {easeOutCubic, smoothValue} from '../easing';
 
-interface Props {
-  type: 'fadeWhite' | 'dotExpand';
-  brandColor?: string;
-}
-
+// Scale + fade entrance — feels more intentional than pure opacity
 export const FadeIn: React.FC<{children: React.ReactNode; durationFrames?: number}> = ({
   children,
-  durationFrames = 12,
+  durationFrames = 14,
 }) => {
   const frame = useCurrentFrame();
-  const opacity = interpolate(frame, [0, durationFrames], [0, 1], {extrapolateRight: 'clamp'});
+  const opacity = smoothValue(frame, 0, durationFrames, 0, 1, easeOutCubic);
+  const scale = smoothValue(frame, 0, durationFrames, 0.97, 1, easeOutCubic);
 
   return (
-    <AbsoluteFill style={{opacity}}>
+    <AbsoluteFill style={{opacity, transform: `scale(${scale})`}}>
       {children}
     </AbsoluteFill>
   );
@@ -26,39 +24,12 @@ export const FadeOut: React.FC<{children: React.ReactNode; durationInFrames: num
 }) => {
   const frame = useCurrentFrame();
   const opacity = frame >= startFadeAt
-    ? interpolate(frame, [startFadeAt, durationInFrames], [1, 0], {extrapolateRight: 'clamp'})
+    ? smoothValue(frame, startFadeAt, durationInFrames, 1, 0, easeOutCubic)
     : 1;
 
   return (
     <AbsoluteFill style={{opacity}}>
       {children}
-    </AbsoluteFill>
-  );
-};
-
-export const DotTransition: React.FC<{brandColor: string; durationInFrames: number}> = ({
-  brandColor,
-  durationInFrames,
-}) => {
-  const frame = useCurrentFrame();
-  const mid = durationInFrames / 2;
-
-  // Dot grows from center then shrinks
-  const scale = frame < mid
-    ? interpolate(frame, [0, mid], [0.05, 40], {extrapolateRight: 'clamp'})
-    : interpolate(frame, [mid, durationInFrames], [40, 0.05], {extrapolateRight: 'clamp'});
-
-  return (
-    <AbsoluteFill style={{justifyContent: 'center', alignItems: 'center', pointerEvents: 'none'}}>
-      <div
-        style={{
-          width: 20,
-          height: 20,
-          borderRadius: '50%',
-          backgroundColor: brandColor,
-          transform: `scale(${scale})`,
-        }}
-      />
     </AbsoluteFill>
   );
 };

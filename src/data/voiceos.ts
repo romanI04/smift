@@ -17,9 +17,11 @@ export const voiceosData: VideoProps = {
       demoLines: [
         'Follow-Up on Project Update',
         'Hi Emily,',
-        'Quick check, would it be easier to move our call to later this week or early next?',
-        "Happy to work around what's best for you.",
-        'Best, Jonah.',
+        '',
+        'Quick check, would it be easier to move our call to later this week or early next? Happy to work around what\'s best for you.',
+        '',
+        'Best,',
+        'Jonah.',
       ],
     },
     {
@@ -27,11 +29,7 @@ export const voiceosData: VideoProps = {
       appName: 'Claude',
       caption: 'Thought to polished prompt',
       demoLines: [
-        'Implement a comprehensive payment system',
-        'that includes secure transaction handling,',
-        'real time status updates, fraud detection',
-        'mechanisms, multi currency support,',
-        'and automatic receipt generation.',
+        'Implement a comprehensive payment system that includes secure transaction handling, real time status updates, fraud detection mechanisms, multi currency support, and automatic receipt generation.',
       ],
     },
     {

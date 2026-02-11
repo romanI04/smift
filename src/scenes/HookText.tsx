@@ -84,6 +84,9 @@ export const HookText: React.FC<Props> = ({line1, line2, keyword, accentColor, b
                     ? '#bbb'
                     : brandColor;
 
+                // Spaces need explicit width in flex layout
+                const isSpace = char === ' ';
+
                 return (
                   <span
                     key={j}
@@ -94,9 +97,11 @@ export const HookText: React.FC<Props> = ({line1, line2, keyword, accentColor, b
                       color: charColor,
                       opacity: charOpacity,
                       letterSpacing: '-0.03em',
+                      display: 'inline-block',
+                      minWidth: isSpace ? '0.25em' : undefined,
                     }}
                   >
-                    {char}
+                    {isSpace ? '\u00A0' : char}
                   </span>
                 );
               })}

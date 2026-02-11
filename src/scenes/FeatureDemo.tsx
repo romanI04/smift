@@ -1,5 +1,6 @@
 import {AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
 import type {Feature} from '../types';
+import {getTypingChars, smoothNoise, smoothValue, easeOutExpo, easeOutCubic} from '../easing';
 
 interface Props {
   feature: Feature;
@@ -205,25 +206,33 @@ const MOCKUP_MAP: Record<string, React.FC<{lines: string[]; charsToShow: number;
   social: TwitterMockup,
 };
 
-// --- Audio Bars ---
+// --- Audio Bars (organic, fluid) ---
 const AudioBars: React.FC<{frame: number; active: boolean}> = ({frame, active}) => {
-  const bars = [0.3, 0.6, 1.0, 0.5, 0.7, 0.4];
+  const barConfigs = [
+    {baseHeight: 0.3, width: 4},
+    {baseHeight: 0.55, width: 5},
+    {baseHeight: 1.0, width: 6},
+    {baseHeight: 0.45, width: 5},
+    {baseHeight: 0.75, width: 5},
+    {baseHeight: 0.35, width: 4},
+  ];
+
   return (
-    <div style={{display: 'flex', alignItems: 'center', gap: 3, height: 32}}>
-      {bars.map((base, i) => {
-        const wave = active
-          ? Math.sin(frame * 0.35 + i * 1.8) * 0.5 + 0.5
-          : 0.15;
-        const h = Math.max(4, base * wave * 32);
+    <div style={{display: 'flex', alignItems: 'center', gap: 3, height: 36}}>
+      {barConfigs.map(({baseHeight, width}, i) => {
+        const noise = smoothNoise(frame, i);
+        const targetH = active ? baseHeight * noise * 36 : 4;
+        // Smooth the height change
+        const h = Math.max(4, targetH);
+
         return (
           <div
             key={i}
             style={{
-              width: 5,
+              width,
               height: h,
-              backgroundColor: 'white',
-              borderRadius: 3,
-              transition: 'height 0.05s',
+              backgroundColor: 'rgba(255,255,255,0.95)',
+              borderRadius: width / 2,
             }}
           />
         );
@@ -251,29 +260,28 @@ export const FeatureDemo: React.FC<Props> = ({feature, brandColor, accentColor})
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
 
-  // Phase timing
-  const pillEnter = spring({frame, fps, config: {damping: 14, stiffness: 100}});
-  const cardExpand = frame > 15
-    ? spring({frame: frame - 15, fps, config: {damping: 16, stiffness: 70}})
-    : 0;
+  // Pill enters with expo ease (slow start, confident snap)
+  const pillScale = smoothValue(frame, 0, 18, 0, 1, easeOutExpo);
 
-  // Text typing (starts at frame 30, ~1.5 chars per frame)
-  const typeStart = 30;
+  // Card expands with cubic ease (gentle, not bouncy)
+  const cardExpand = smoothValue(frame, 12, 35, 0, 1, easeOutCubic);
+
+  // Variable-speed typing (pauses at punctuation, faster on common chars)
+  const typeStart = 28;
   const allText = feature.demoLines.join('\n');
-  const charsToShow = frame > typeStart ? Math.floor((frame - typeStart) * 1.5) : 0;
+  const charsToShow = getTypingChars(frame, typeStart, allText);
   const typingDone = charsToShow >= allText.length;
 
-  // Caption appears after typing finishes or at frame 120
-  const captionStart = Math.min(120, typeStart + Math.ceil(allText.length / 1.5) + 10);
-  const captionProgress = frame > captionStart
-    ? spring({frame: frame - captionStart, fps, config: {damping: 15, stiffness: 90}})
-    : 0;
+  // Caption appears at a fixed time (or when typing is mostly done)
+  const captionShowFrame = 125;
+  const captionOpacity = smoothValue(frame, captionShowFrame, captionShowFrame + 20, 0, 1, easeOutCubic);
 
-  // Exit: card fades, pill collapses
-  const exitStart = 160;
-  const exitProgress = frame > exitStart
-    ? interpolate(frame, [exitStart, 195], [0, 1], {extrapolateRight: 'clamp'})
-    : 0;
+  // Exit: exponential ease-out for smooth departure
+  const exitStart = 165;
+  const exitProgress = smoothValue(frame, exitStart, 198, 0, 1, easeOutExpo);
+
+  // Card slight float during typing (subtle Y movement)
+  const cardFloat = typingDone ? 0 : Math.sin(frame * 0.05) * 2;
 
   const Mockup = MOCKUP_MAP[feature.icon] || EmailMockup;
 
@@ -284,7 +292,7 @@ export const FeatureDemo: React.FC<Props> = ({feature, brandColor, accentColor})
         style={{
           position: 'absolute',
           top: '8%',
-          transform: `scale(${0.85 + cardExpand * 0.15})`,
+          transform: `scale(${0.88 + cardExpand * 0.12}) translateY(${cardFloat + (1 - cardExpand) * 15}px)`,
           opacity: cardExpand * (1 - exitProgress),
           transformOrigin: 'center bottom',
         }}
@@ -303,15 +311,15 @@ export const FeatureDemo: React.FC<Props> = ({feature, brandColor, accentColor})
           backgroundColor: brandColor,
           borderRadius: 50,
           padding: '12px 24px',
-          transform: `scale(${pillEnter})`,
-          opacity: 1 - exitProgress * 1.5,
+          transform: `scale(${pillScale * (1 - exitProgress * 0.3)})`,
+          opacity: 1 - exitProgress,
         }}
       >
         <PillIcon icon={feature.icon} />
-        <AudioBars frame={frame} active={!typingDone} />
+        <AudioBars frame={frame} active={!typingDone && frame > typeStart} />
 
         {/* Caption slides in */}
-        {captionProgress > 0 && (
+        {captionOpacity > 0.01 && (
           <span
             style={{
               color: 'white',
@@ -319,8 +327,8 @@ export const FeatureDemo: React.FC<Props> = ({feature, brandColor, accentColor})
               fontWeight: 500,
               fontFamily: 'system-ui, -apple-system, sans-serif',
               marginLeft: 4,
-              opacity: captionProgress,
-              transform: `translateX(${(1 - captionProgress) * 20}px)`,
+              opacity: captionOpacity,
+              transform: `translateX(${(1 - captionOpacity) * 15}px)`,
             }}
           >
             {feature.caption}

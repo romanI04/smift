@@ -1,4 +1,5 @@
 import {AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
+import {smoothValue, easeOutExpo, easeInOutQuart} from '../easing';
 
 interface Props {
   brandName: string;

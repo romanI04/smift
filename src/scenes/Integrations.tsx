@@ -22,6 +22,30 @@ const AppIcon: React.FC<{name: string; size: number}> = ({name, size}) => {
     Cursor: {bg: '#000', fg: '#fff', label: '▸'},
     Figma: {bg: '#1E1E1E', fg: '#A259FF', label: 'F'},
     Linear: {bg: '#5E6AD2', fg: '#fff', label: 'L'},
+    Jira: {bg: '#0052CC', fg: '#fff', label: 'J'},
+    Trello: {bg: '#0079BF', fg: '#fff', label: 'T'},
+    Asana: {bg: '#F06A6A', fg: '#fff', label: 'A'},
+    Zapier: {bg: '#FF4A00', fg: '#fff', label: 'Z'},
+    Sentry: {bg: '#362D59', fg: '#fff', label: 'S'},
+    'Google Drive': {bg: '#fff', fg: '#4285F4', label: 'G'},
+    Dropbox: {bg: '#0061FF', fg: '#fff', label: 'D'},
+    Salesforce: {bg: '#00A1E0', fg: '#fff', label: 'S'},
+    Stripe: {bg: '#635BFF', fg: '#fff', label: 'S'},
+    Intercom: {bg: '#286EFA', fg: '#fff', label: 'I'},
+    HubSpot: {bg: '#FF7A59', fg: '#fff', label: 'H'},
+    Zendesk: {bg: '#03363D', fg: '#fff', label: 'Z'},
+    Airtable: {bg: '#18BFFF', fg: '#fff', label: 'A'},
+    Monday: {bg: '#FF3D57', fg: '#fff', label: 'M'},
+    Vercel: {bg: '#000', fg: '#fff', label: '▲'},
+    Netlify: {bg: '#00C7B7', fg: '#fff', label: 'N'},
+    AWS: {bg: '#FF9900', fg: '#232F3E', label: 'A'},
+    Discord: {bg: '#5865F2', fg: '#fff', label: 'D'},
+    Zoom: {bg: '#2D8CFF', fg: '#fff', label: 'Z'},
+    Loom: {bg: '#625DF5', fg: '#fff', label: 'L'},
+    Miro: {bg: '#FFD02F', fg: '#050038', label: 'M'},
+    ClickUp: {bg: '#7B68EE', fg: '#fff', label: 'C'},
+    Webflow: {bg: '#146EF5', fg: '#fff', label: 'W'},
+    Shopify: {bg: '#96BF48', fg: '#fff', label: 'S'},
   };
 
   const style = iconStyles[name] || {bg: '#f0f0f0', fg: '#333', label: name[0]};
@@ -123,7 +147,7 @@ export const Integrations: React.FC<Props> = ({integrations, brandColor, accentC
 
         {/* Center text block */}
         <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, zIndex: 1}}>
-          {/* Line 1: [VO pill] works across all apps */}
+          {/* Line 1: [brand pill] works across all apps */}
           <div
             style={{
               display: 'flex',
@@ -144,17 +168,17 @@ export const Integrations: React.FC<Props> = ({integrations, brandColor, accentC
               }}
             >
               <span style={{fontSize: 15, fontWeight: 800, color: 'white', fontFamily: 'system-ui'}}>
-                VO
+                {brandName.length <= 4 ? brandName.toUpperCase() : brandName.slice(0, 2).toUpperCase()}
               </span>
             </div>
 
             <span style={{fontSize: 44, fontWeight: 600, fontFamily: 'system-ui, -apple-system, sans-serif', letterSpacing: '-0.02em'}}>
               <span style={{color: accentColor}}>works</span>{' '}
-              <span style={{color: brandColor}}>across all apps</span>
+              <span style={{color: brandColor}}>with your stack</span>
             </span>
           </div>
 
-          {/* Line 2: with zero setup required */}
+          {/* Line 2 */}
           <span
             style={{
               fontSize: 40,
@@ -165,8 +189,8 @@ export const Integrations: React.FC<Props> = ({integrations, brandColor, accentC
               transform: `translateY(${(1 - text2Progress) * 15}px)`,
             }}
           >
-            <span style={{color: brandColor}}>with zero setup</span>{' '}
-            <span style={{color: accentColor}}>required</span>
+            <span style={{color: brandColor}}>no migration</span>{' '}
+            <span style={{color: accentColor}}>needed</span>
           </span>
         </div>
       </div>

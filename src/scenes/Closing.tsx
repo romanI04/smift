@@ -72,36 +72,22 @@ export const Closing: React.FC<Props> = ({brandName, brandColor, accentColor, ct
         }}
       />
 
-      {/* Neumorphic ghost logo */}
+      {/* Neumorphic ghost brand mark */}
       <div
         style={{
           position: 'absolute',
-          display: 'flex',
-          gap: 24,
           opacity: ghostOpacity,
           transform: `scale(${0.8 + ghostProgress * 0.2})`,
+          fontSize: 160,
+          fontWeight: 900,
+          fontFamily: 'system-ui, -apple-system, sans-serif',
+          color: 'transparent',
+          letterSpacing: '-0.04em',
+          textShadow: '6px 6px 16px rgba(0,0,0,0.06), -4px -4px 12px rgba(255,255,255,0.9)',
+          WebkitTextStroke: `2px #e8e8e8`,
         }}
       >
-        {/* Triangle V */}
-        <div
-          style={{
-            width: 120,
-            height: 100,
-            clipPath: 'polygon(50% 100%, 0% 0%, 100% 0%)',
-            boxShadow: '6px 6px 16px rgba(0,0,0,0.06), -4px -4px 12px rgba(255,255,255,0.9)',
-            backgroundColor: '#f0f0f0',
-          }}
-        />
-        {/* Circle O */}
-        <div
-          style={{
-            width: 100,
-            height: 100,
-            borderRadius: '50%',
-            boxShadow: '6px 6px 16px rgba(0,0,0,0.06), -4px -4px 12px rgba(255,255,255,0.9)',
-            backgroundColor: '#f0f0f0',
-          }}
-        />
+        {brandName.slice(0, 2).toUpperCase()}
       </div>
 
       {/* Main wordmark */}

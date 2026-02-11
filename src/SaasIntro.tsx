@@ -52,7 +52,7 @@ export const SaasIntro: React.FC<VideoProps> = (props) => {
         </FadeIn>
       </Sequence>
 
-      <Sequence from={285} durationInFrames={200} name="Feature: Email">
+      <Sequence from={285} durationInFrames={200} name={`Feature 1: ${props.features[0]?.appName || ''}`}>
         <FadeIn durationFrames={8}>
           <FeatureDemo
             feature={props.features[0]}
@@ -62,7 +62,7 @@ export const SaasIntro: React.FC<VideoProps> = (props) => {
         </FadeIn>
       </Sequence>
 
-      <Sequence from={480} durationInFrames={200} name="Feature: Claude">
+      <Sequence from={480} durationInFrames={200} name={`Feature 2: ${props.features[1]?.appName || ''}`}>
         <FadeIn durationFrames={8}>
           <FeatureDemo
             feature={props.features[1]}
@@ -72,7 +72,7 @@ export const SaasIntro: React.FC<VideoProps> = (props) => {
         </FadeIn>
       </Sequence>
 
-      <Sequence from={675} durationInFrames={180} name="Feature: X">
+      <Sequence from={675} durationInFrames={180} name={`Feature 3: ${props.features[2]?.appName || ''}`}>
         <FadeIn durationFrames={8}>
           <FeatureDemo
             feature={props.features[2]}

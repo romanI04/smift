@@ -11,89 +11,136 @@ export const Closing: React.FC<Props> = ({brandName, brandColor, accentColor, ct
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
 
-  // Blue ring flash
-  const ringScale = spring({
-    frame,
-    fps,
-    config: {damping: 8, stiffness: 60, mass: 1.2},
-  });
-  const ringOpacity = interpolate(frame, [0, 20, 40], [0, 0.6, 0], {extrapolateRight: 'clamp'});
+  // Phase 1: Blue ring pulse (0-50)
+  const ring1Scale = spring({frame, fps, config: {damping: 6, stiffness: 30, mass: 2}});
+  const ring1Opacity = interpolate(frame, [0, 15, 45], [0, 0.5, 0], {extrapolateRight: 'clamp'});
 
-  // Neumorphic logo ghost
-  const ghostOpacity = interpolate(frame, [20, 40, 60], [0, 0.3, 0], {extrapolateRight: 'clamp'});
+  const ring2Scale = frame > 8
+    ? spring({frame: frame - 8, fps, config: {damping: 6, stiffness: 30, mass: 2}})
+    : 0;
+  const ring2Opacity = interpolate(frame, [8, 25, 55], [0, 0.3, 0], {extrapolateRight: 'clamp'});
 
-  // Wordmark entrance
-  const wordmarkStart = 50;
-  const wordmarkScale = frame > wordmarkStart
-    ? spring({frame: frame - wordmarkStart, fps, config: {damping: 14, stiffness: 90}})
+  // Phase 2: Neumorphic ghost VO logo (30-80)
+  const ghostStart = 30;
+  const ghostProgress = frame > ghostStart
+    ? spring({frame: frame - ghostStart, fps, config: {damping: 14, stiffness: 40, mass: 1.5}})
+    : 0;
+  const ghostOpacity = frame > ghostStart
+    ? interpolate(frame, [ghostStart, 50, 80], [0, 0.15, 0], {extrapolateRight: 'clamp'})
     : 0;
 
-  // URL text
-  const urlStart = 80;
+  // Phase 3: Wordmark entrance (70-170)
+  const wmStart = 70;
+  const wmScale = frame > wmStart
+    ? spring({frame: frame - wmStart, fps, config: {damping: 12, stiffness: 60, mass: 1}})
+    : 0;
+
+  // Phase 4: URL fades in (120+)
+  const urlStart = 120;
   const urlOpacity = frame > urlStart
-    ? interpolate(frame - urlStart, [0, 20], [0, 1], {extrapolateRight: 'clamp'})
+    ? spring({frame: frame - urlStart, fps, config: {damping: 20, stiffness: 60}})
     : 0;
+
+  // Phase 5: Subtle breathing pulse on wordmark (170+)
+  const breathe = frame > 170
+    ? 1 + Math.sin((frame - 170) * 0.04) * 0.008
+    : 1;
 
   return (
     <AbsoluteFill style={{backgroundColor: 'white', justifyContent: 'center', alignItems: 'center'}}>
-      {/* Blue ring flash */}
+      {/* Ring pulses */}
       <div
         style={{
           position: 'absolute',
-          width: 500 * ringScale,
-          height: 500 * ringScale,
+          width: 600 * ring1Scale,
+          height: 600 * ring1Scale,
           borderRadius: '50%',
-          border: `3px solid ${accentColor}`,
-          opacity: ringOpacity,
-          boxShadow: `0 0 80px ${accentColor}40`,
+          border: `2px solid ${accentColor}`,
+          opacity: ring1Opacity,
+          boxShadow: `0 0 120px ${accentColor}30, inset 0 0 60px ${accentColor}10`,
+        }}
+      />
+      <div
+        style={{
+          position: 'absolute',
+          width: 400 * ring2Scale,
+          height: 400 * ring2Scale,
+          borderRadius: '50%',
+          border: `1.5px solid ${accentColor}`,
+          opacity: ring2Opacity,
+          boxShadow: `0 0 80px ${accentColor}20`,
         }}
       />
 
-      {/* Neumorphic ghost text */}
+      {/* Neumorphic ghost logo */}
       <div
         style={{
           position: 'absolute',
-          fontSize: 180,
-          fontWeight: 800,
-          fontFamily: 'system-ui, -apple-system, sans-serif',
-          color: 'transparent',
-          textShadow: '4px 4px 8px rgba(0,0,0,0.06), -2px -2px 6px rgba(255,255,255,0.8)',
-          WebkitTextStroke: '1px rgba(0,0,0,0.04)',
+          display: 'flex',
+          gap: 24,
           opacity: ghostOpacity,
-          letterSpacing: '-0.04em',
+          transform: `scale(${0.8 + ghostProgress * 0.2})`,
         }}
       >
-        {brandName.slice(0, 2).toUpperCase()}
+        {/* Triangle V */}
+        <div
+          style={{
+            width: 120,
+            height: 100,
+            clipPath: 'polygon(50% 100%, 0% 0%, 100% 0%)',
+            boxShadow: '6px 6px 16px rgba(0,0,0,0.06), -4px -4px 12px rgba(255,255,255,0.9)',
+            backgroundColor: '#f0f0f0',
+          }}
+        />
+        {/* Circle O */}
+        <div
+          style={{
+            width: 100,
+            height: 100,
+            borderRadius: '50%',
+            boxShadow: '6px 6px 16px rgba(0,0,0,0.06), -4px -4px 12px rgba(255,255,255,0.9)',
+            backgroundColor: '#f0f0f0',
+          }}
+        />
       </div>
 
       {/* Main wordmark */}
       <div
         style={{
-          fontSize: 120,
-          fontWeight: 800,
-          fontFamily: 'system-ui, -apple-system, sans-serif',
-          color: brandColor,
-          transform: `scale(${wordmarkScale})`,
-          letterSpacing: '-0.04em',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 24,
         }}
       >
-        {brandName.toLowerCase()}
-      </div>
+        <div
+          style={{
+            fontSize: 110,
+            fontWeight: 800,
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            color: brandColor,
+            letterSpacing: '-0.04em',
+            transform: `scale(${wmScale * breathe})`,
+            opacity: wmScale,
+          }}
+        >
+          {brandName.toLowerCase()}
+        </div>
 
-      {/* URL */}
-      <div
-        style={{
-          position: 'absolute',
-          bottom: '18%',
-          fontSize: 28,
-          fontWeight: 400,
-          fontFamily: 'system-ui, -apple-system, sans-serif',
-          color: '#666',
-          opacity: urlOpacity,
-          letterSpacing: '0.02em',
-        }}
-      >
-        {ctaUrl}
+        {/* URL */}
+        <div
+          style={{
+            fontSize: 26,
+            fontWeight: 400,
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            color: '#999',
+            opacity: urlOpacity,
+            transform: `translateY(${(1 - urlOpacity) * 10}px)`,
+            letterSpacing: '0.03em',
+          }}
+        >
+          {ctaUrl}
+        </div>
       </div>
     </AbsoluteFill>
   );

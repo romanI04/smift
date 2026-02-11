@@ -11,8 +11,12 @@
   "dependencies": {
     "@remotion/bundler": "^4.0.421",
     "@remotion/cli": "^4.0.421",
+    "@remotion/google-fonts": "^4.0.421",
+    "@remotion/media-parser": "^4.0.421",
+    "@remotion/media-utils": "^4.0.421",
     "@remotion/player": "^4.0.421",
     "@remotion/renderer": "^4.0.421",
+    "@remotion/transitions": "^4.0.421",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "cheerio": "^1.2.0",

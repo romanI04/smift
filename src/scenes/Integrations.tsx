@@ -1,4 +1,5 @@
 import {AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
+import {FONT_DISPLAY} from '../fonts';
 
 interface Props {
   integrations: string[];
@@ -172,7 +173,7 @@ export const Integrations: React.FC<Props> = ({integrations, brandColor, accentC
               </span>
             </div>
 
-            <span style={{fontSize: 44, fontWeight: 600, fontFamily: 'system-ui, -apple-system, sans-serif', letterSpacing: '-0.02em'}}>
+            <span style={{fontSize: 44, fontWeight: 600, fontFamily: FONT_DISPLAY, letterSpacing: '-0.02em'}}>
               <span style={{color: accentColor}}>works</span>{' '}
               <span style={{color: brandColor}}>with your stack</span>
             </span>
@@ -183,7 +184,7 @@ export const Integrations: React.FC<Props> = ({integrations, brandColor, accentC
             style={{
               fontSize: 40,
               fontWeight: 600,
-              fontFamily: 'system-ui, -apple-system, sans-serif',
+              fontFamily: FONT_DISPLAY,
               letterSpacing: '-0.02em',
               opacity: text2Progress,
               transform: `translateY(${(1 - text2Progress) * 15}px)`,

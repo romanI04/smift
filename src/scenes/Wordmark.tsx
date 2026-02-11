@@ -1,4 +1,5 @@
 import {AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
+import {FONT_DISPLAY, FONT_BODY} from '../fonts';
 
 interface Props {
   brandName: string;
@@ -28,7 +29,7 @@ export const Wordmark: React.FC<Props> = ({brandName, brandColor, tagline}) => {
           style={{
             fontSize: 96,
             fontWeight: 800,
-            fontFamily: 'system-ui, -apple-system, sans-serif',
+            fontFamily: FONT_DISPLAY,
             color: brandColor,
             letterSpacing: '-0.04em',
             transform: `scale(${nameScale})`,
@@ -40,7 +41,7 @@ export const Wordmark: React.FC<Props> = ({brandName, brandColor, tagline}) => {
           style={{
             fontSize: 24,
             fontWeight: 400,
-            fontFamily: 'system-ui, -apple-system, sans-serif',
+            fontFamily: FONT_BODY,
             color: '#888',
             opacity: taglineOpacity,
             letterSpacing: '0.04em',

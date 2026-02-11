@@ -4,6 +4,7 @@ import {generateVoice} from './voice';
 import {bundle} from '@remotion/bundler';
 import {renderMedia, selectComposition} from '@remotion/renderer';
 import path from 'path';
+import fs from 'fs';
 import dotenv from 'dotenv';
 
 // Load env from clawd root
@@ -18,6 +19,11 @@ async function run() {
 
   const outputName = url.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-');
   const outputDir = path.resolve(__dirname, '../../out');
+  const publicDir = path.resolve(__dirname, '../../public');
+
+  // Ensure dirs exist
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, {recursive: true});
+  if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, {recursive: true});
 
   console.log(`\n[1/4] Scraping ${url}...`);
   const scraped = await scrapeUrl(url);
@@ -33,27 +39,43 @@ async function run() {
 
   // Save script for debugging
   const scriptPath = path.join(outputDir, `${outputName}-script.json`);
-  const fs = await import('fs');
   fs.writeFileSync(scriptPath, JSON.stringify(script, null, 2));
   console.log(`  -> Script saved to ${scriptPath}`);
 
   console.log(`\n[3/4] Generating voice via ElevenLabs...`);
-  const audioPath = path.join(outputDir, `${outputName}-voice.mp3`);
-  let voiceResult;
+  const audioFilename = `${outputName}-voice.mp3`;
+  const audioPath = path.join(outputDir, audioFilename);
+  let voiceResult: {path: string; durationMs: number} | null = null;
+
   try {
     voiceResult = await generateVoice(script.narration, {outputPath: audioPath});
     console.log(`  -> Audio: ${voiceResult.path} (${voiceResult.durationMs}ms)`);
+
+    // Copy voice to public/ so Remotion's staticFile() can find it
+    const publicAudioPath = path.join(publicDir, 'voice.mp3');
+    fs.copyFileSync(audioPath, publicAudioPath);
+    console.log(`  -> Copied to public/voice.mp3 for Remotion`);
   } catch (e: any) {
     console.warn(`  -> Voice generation failed: ${e.message}`);
     console.warn(`  -> Continuing without voice...`);
-    voiceResult = null;
   }
 
   console.log(`\n[4/4] Rendering video with Remotion...`);
   const entryPoint = path.resolve(__dirname, '../index.ts');
-  const bundled = await bundle({entryPoint});
+  const bundled = await bundle({entryPoint, publicDir});
 
-  const inputProps = script as unknown as Record<string, unknown>;
+  const inputProps: Record<string, unknown> = {
+    ...script,
+    // Audio props — only if voice was generated
+    ...(voiceResult && {
+      audioSrc: 'voice.mp3',
+      audioDurationMs: voiceResult.durationMs,
+    }),
+  };
+
+  // Remove narration from props (not a VideoProps field)
+  delete inputProps.narration;
+
   const composition = await selectComposition({
     serveUrl: bundled,
     id: 'SaasIntro',
@@ -72,9 +94,7 @@ async function run() {
   console.log(`\n✓ Done!`);
   console.log(`  Video: ${videoPath}`);
   if (voiceResult) {
-    console.log(`  Voice: ${voiceResult.path}`);
-    console.log(`\n  Note: Voice track is separate. Merge with:`);
-    console.log(`  ffmpeg -i "${videoPath}" -i "${voiceResult.path}" -c:v copy -c:a aac -shortest "${videoPath.replace('.mp4', '-with-voice.mp4')}"`);
+    console.log(`  Voice is baked into the video!`);
   }
 }
 

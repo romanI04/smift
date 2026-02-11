@@ -1,4 +1,5 @@
 import {AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
+import {FONT_DISPLAY, FONT_BODY} from '../fonts';
 
 interface Props {
   brandName: string;
@@ -103,7 +104,7 @@ export const Closing: React.FC<Props> = ({brandName, brandColor, accentColor, ct
           style={{
             fontSize: 110,
             fontWeight: 800,
-            fontFamily: 'system-ui, -apple-system, sans-serif',
+            fontFamily: FONT_DISPLAY,
             color: brandColor,
             letterSpacing: '-0.04em',
             transform: `scale(${wmScale * breathe})`,
@@ -118,7 +119,7 @@ export const Closing: React.FC<Props> = ({brandName, brandColor, accentColor, ct
           style={{
             fontSize: 26,
             fontWeight: 400,
-            fontFamily: 'system-ui, -apple-system, sans-serif',
+            fontFamily: FONT_BODY,
             color: '#999',
             opacity: urlOpacity,
             transform: `translateY(${(1 - urlOpacity) * 10}px)`,

@@ -1,4 +1,5 @@
 import {AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
+import {FONT_DISPLAY} from '../fonts';
 
 interface Props {
   line1: string;
@@ -93,7 +94,7 @@ export const HookText: React.FC<Props> = ({line1, line2, keyword, accentColor, b
                     style={{
                       fontSize: 80,
                       fontWeight: 700,
-                      fontFamily: 'system-ui, -apple-system, sans-serif',
+                      fontFamily: FONT_DISPLAY,
                       color: charColor,
                       opacity: charOpacity,
                       letterSpacing: '-0.03em',

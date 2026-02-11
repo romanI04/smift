@@ -5,17 +5,23 @@
   "scripts": {
     "studio": "remotion studio src/index.ts",
     "render": "remotion render src/index.ts SaasIntro out/video.mp4",
-    "preview": "remotion preview src/index.ts"
+    "preview": "remotion preview src/index.ts",
+    "generate": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/run.ts"
   },
   "dependencies": {
+    "@remotion/bundler": "^4.0.421",
     "@remotion/cli": "^4.0.421",
     "@remotion/player": "^4.0.421",
     "@remotion/renderer": "^4.0.421",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "cheerio": "^1.2.0",
+    "dotenv": "^17.2.4",
+    "openai": "^6.21.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "remotion": "^4.0.421",
+    "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
 }

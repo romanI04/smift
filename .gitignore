@@ -1,0 +1,10 @@
+node_modules/
+dist/
+out/
+.env
+.env.*
+*.mp4
+*.webm
+*.mov
+*.json.bak
+.DS_Store

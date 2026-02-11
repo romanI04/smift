@@ -10,58 +10,95 @@ export const BrandReveal: React.FC<Props> = ({brandName, brandColor, accentColor
   const frame = useCurrentFrame();
   const {fps} = useVideoConfig();
 
-  // Circle scale: starts small, grows, then shrinks to dot
-  const circleScale = spring({
-    frame,
-    fps,
-    config: {damping: 12, stiffness: 80, mass: 0.8},
-  });
+  // Phase 1: Orb appears and rotates (0-60)
+  // Phase 2: Orb flattens to solid dot (60-90)
 
-  // Color cycling through gradients (simulating the HDRI orb)
-  const hue = interpolate(frame, [0, 90], [200, 360]);
-  const saturation = interpolate(frame, [0, 45, 90], [60, 80, 60]);
-  const lightness = interpolate(frame, [0, 30, 60, 90], [50, 60, 40, 55]);
+  const enterScale = spring({frame, fps, config: {damping: 10, stiffness: 50, mass: 1.2}});
+  const orbSize = 280;
 
-  // Circle shrinks to dot at the end
-  const shrinkStart = 70;
-  const shrinkScale = frame > shrinkStart
-    ? interpolate(frame, [shrinkStart, 90], [1, 0.08], {extrapolateRight: 'clamp'})
+  // Rotating highlight position (simulates 3D rotation)
+  const highlightAngle = interpolate(frame, [0, 90], [0, 720]);
+  const highlightX = 35 + Math.cos((highlightAngle * Math.PI) / 180) * 15;
+  const highlightY = 30 + Math.sin((highlightAngle * Math.PI) / 180) * 10;
+
+  // Color cycling (dawn → day → dusk → night)
+  const hue1 = interpolate(frame, [0, 25, 50, 75, 90], [340, 200, 220, 260, 210]);
+  const hue2 = interpolate(frame, [0, 25, 50, 75, 90], [30, 210, 280, 230, 220]);
+  const lightness = interpolate(frame, [0, 25, 50, 75, 90], [55, 62, 48, 35, 58]);
+
+  // Flatten to black dot
+  const flattenStart = 60;
+  const flattenProgress = frame > flattenStart
+    ? interpolate(frame, [flattenStart, 85], [0, 1], {extrapolateRight: 'clamp'})
+    : 0;
+
+  // Dot shrink at very end
+  const shrinkProgress = frame > 80
+    ? interpolate(frame, [80, 90], [1, 0.06], {extrapolateRight: 'clamp'})
     : 1;
 
-  const circleSize = 300 * circleScale * shrinkScale;
-
-  // Opacity fade for the gradient
-  const gradientOpacity = interpolate(frame, [75, 90], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
-
-  // Solid black dot appears
-  const dotOpacity = interpolate(frame, [75, 85], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+  const gradientOpacity = 1 - flattenProgress;
+  const blackOpacity = flattenProgress;
+  const currentSize = orbSize * enterScale * shrinkProgress;
 
   return (
     <AbsoluteFill style={{backgroundColor: 'white', justifyContent: 'center', alignItems: 'center'}}>
-      {/* Gradient orb */}
+      {/* Ambient glow */}
       <div
         style={{
-          width: circleSize,
-          height: circleSize,
-          borderRadius: '50%',
-          background: `radial-gradient(circle at 35% 35%,
-            hsl(${hue + 40}, ${saturation}%, ${lightness + 20}%),
-            hsl(${hue}, ${saturation}%, ${lightness}%),
-            hsl(${hue - 30}, ${saturation + 10}%, ${lightness - 15}%))`,
-          opacity: gradientOpacity,
           position: 'absolute',
-          boxShadow: `0 0 ${circleSize * 0.3}px hsl(${hue}, ${saturation}%, ${lightness}%, 0.3)`,
+          width: currentSize * 2.5,
+          height: currentSize * 2.5,
+          borderRadius: '50%',
+          background: `radial-gradient(circle, hsl(${hue1}, 50%, 80%, 0.15) 0%, transparent 70%)`,
+          opacity: gradientOpacity * 0.6,
         }}
       />
+
+      {/* Gradient orb (multi-layer for depth) */}
+      <div
+        style={{
+          width: currentSize,
+          height: currentSize,
+          borderRadius: '50%',
+          position: 'absolute',
+          opacity: gradientOpacity,
+          background: `
+            radial-gradient(circle at ${highlightX}% ${highlightY}%,
+              hsl(${hue1 + 40}, 70%, ${lightness + 25}%) 0%,
+              hsl(${hue1}, 65%, ${lightness + 10}%) 25%,
+              hsl(${hue2}, 60%, ${lightness}%) 55%,
+              hsl(${hue2 - 20}, 55%, ${lightness - 15}%) 80%,
+              hsl(${hue2 - 40}, 50%, ${lightness - 25}%) 100%)`,
+          boxShadow: `
+            inset -${currentSize * 0.08}px -${currentSize * 0.05}px ${currentSize * 0.2}px hsl(${hue2}, 40%, ${lightness - 20}%, 0.4),
+            inset ${currentSize * 0.06}px ${currentSize * 0.04}px ${currentSize * 0.15}px hsl(${hue1}, 60%, ${lightness + 20}%, 0.3),
+            0 ${currentSize * 0.05}px ${currentSize * 0.2}px hsl(${hue2}, 40%, 40%, 0.15)`,
+        }}
+      />
+
+      {/* Specular highlight (white shine) */}
+      <div
+        style={{
+          position: 'absolute',
+          width: currentSize * 0.35,
+          height: currentSize * 0.25,
+          borderRadius: '50%',
+          background: 'radial-gradient(ellipse, rgba(255,255,255,0.6) 0%, transparent 70%)',
+          opacity: gradientOpacity * 0.8,
+          transform: `translate(${-currentSize * 0.12}px, ${-currentSize * 0.15}px) rotate(-20deg)`,
+        }}
+      />
+
       {/* Solid black dot */}
       <div
         style={{
-          width: circleSize,
-          height: circleSize,
+          width: currentSize,
+          height: currentSize,
           borderRadius: '50%',
           backgroundColor: brandColor,
-          opacity: dotOpacity,
           position: 'absolute',
+          opacity: blackOpacity,
         }}
       />
     </AbsoluteFill>

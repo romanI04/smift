@@ -1,24 +1,28 @@
 import {AbsoluteFill, Sequence} from 'remotion';
 import {BrandReveal} from './scenes/BrandReveal';
 import {HookText} from './scenes/HookText';
+import {Wordmark} from './scenes/Wordmark';
 import {FeatureDemo} from './scenes/FeatureDemo';
 import {Integrations} from './scenes/Integrations';
 import {Closing} from './scenes/Closing';
+import {FadeIn} from './scenes/Transition';
 import type {VideoProps} from './types';
 
-// Timing (30fps)
-// Scene 1: BrandReveal    0-90   (0-3s)
-// Scene 2: HookText       90-210 (3-7s)
-// Scene 3: Feature 1      210-420 (7-14s)
-// Scene 4: Feature 2      420-630 (14-21s)
-// Scene 5: Feature 3      630-810 (21-27s)
-// Scene 6: Integrations   810-1050 (27-35s)
-// Scene 7: Closing         1050-1380 (35-46s)
+// Timeline (30fps, 46s = 1380 frames)
+//
+// 0-90      BrandReveal     (3s)   orb → black dot
+// 85-210    HookText        (4.2s) kinetic text, overlaps for crossfade
+// 205-290   Wordmark        (2.8s) brand name + tagline flash
+// 285-485   Feature 1       (6.7s) email demo
+// 480-680   Feature 2       (6.7s) claude demo
+// 675-850   Feature 3       (5.8s) twitter demo
+// 845-1080  Integrations    (7.8s) icon carousel
+// 1070-1380 Closing         (10.3s) ring → wordmark → url
 
 export const SaasIntro: React.FC<VideoProps> = (props) => {
   return (
     <AbsoluteFill style={{backgroundColor: 'white'}}>
-      <Sequence from={0} durationInFrames={90} name="Brand Reveal">
+      <Sequence from={0} durationInFrames={95} name="Brand Reveal">
         <BrandReveal
           brandName={props.brandName}
           brandColor={props.brandColor}
@@ -26,41 +30,70 @@ export const SaasIntro: React.FC<VideoProps> = (props) => {
         />
       </Sequence>
 
-      <Sequence from={90} durationInFrames={120} name="Hook Text">
-        <HookText
-          line1={props.hookLine1}
-          line2={props.hookLine2}
-          keyword={props.hookKeyword}
-          accentColor={props.accentColor}
-          brandColor={props.brandColor}
-        />
+      <Sequence from={85} durationInFrames={130} name="Hook Text">
+        <FadeIn durationFrames={10}>
+          <HookText
+            line1={props.hookLine1}
+            line2={props.hookLine2}
+            keyword={props.hookKeyword}
+            accentColor={props.accentColor}
+            brandColor={props.brandColor}
+          />
+        </FadeIn>
       </Sequence>
 
-      {props.features.map((feature, i) => (
-        <Sequence
-          key={i}
-          from={210 + i * 200}
-          durationInFrames={200}
-          name={`Feature: ${feature.appName}`}
-        >
+      <Sequence from={205} durationInFrames={85} name="Wordmark">
+        <FadeIn durationFrames={8}>
+          <Wordmark
+            brandName={props.brandName}
+            brandColor={props.brandColor}
+            tagline={props.tagline}
+          />
+        </FadeIn>
+      </Sequence>
+
+      <Sequence from={285} durationInFrames={200} name="Feature: Email">
+        <FadeIn durationFrames={8}>
           <FeatureDemo
-            feature={feature}
+            feature={props.features[0]}
             brandColor={props.brandColor}
             accentColor={props.accentColor}
           />
-        </Sequence>
-      ))}
-
-      <Sequence from={810} durationInFrames={240} name="Integrations">
-        <Integrations
-          integrations={props.integrations}
-          brandColor={props.brandColor}
-          accentColor={props.accentColor}
-          brandName={props.brandName}
-        />
+        </FadeIn>
       </Sequence>
 
-      <Sequence from={1050} durationInFrames={330} name="Closing">
+      <Sequence from={480} durationInFrames={200} name="Feature: Claude">
+        <FadeIn durationFrames={8}>
+          <FeatureDemo
+            feature={props.features[1]}
+            brandColor={props.brandColor}
+            accentColor={props.accentColor}
+          />
+        </FadeIn>
+      </Sequence>
+
+      <Sequence from={675} durationInFrames={180} name="Feature: X">
+        <FadeIn durationFrames={8}>
+          <FeatureDemo
+            feature={props.features[2]}
+            brandColor={props.brandColor}
+            accentColor={props.accentColor}
+          />
+        </FadeIn>
+      </Sequence>
+
+      <Sequence from={845} durationInFrames={240} name="Integrations">
+        <FadeIn durationFrames={10}>
+          <Integrations
+            integrations={props.integrations}
+            brandColor={props.brandColor}
+            accentColor={props.accentColor}
+            brandName={props.brandName}
+          />
+        </FadeIn>
+      </Sequence>
+
+      <Sequence from={1070} durationInFrames={310} name="Closing">
         <Closing
           brandName={props.brandName}
           brandColor={props.brandColor}

@@ -14,17 +14,18 @@ export const BrandReveal: React.FC<Props> = ({brandName, brandColor, accentColor
   // Phase 2: Orb flattens to solid dot + brand text (65-100)
 
   const enterScale = spring({frame, fps, config: {damping: 8, stiffness: 40, mass: 1.5}});
-  const orbSize = 260;
+  const orbSize = 300;
 
   // Rotating highlight position (simulates 3D rotation)
-  const highlightAngle = interpolate(frame, [0, 100], [0, 900]);
-  const highlightX = 35 + Math.cos((highlightAngle * Math.PI) / 180) * 18;
-  const highlightY = 30 + Math.sin((highlightAngle * Math.PI) / 180) * 12;
+  const highlightAngle = interpolate(frame, [0, 100], [0, 720]);
+  const highlightX = 38 + Math.cos((highlightAngle * Math.PI) / 180) * 14;
+  const highlightY = 32 + Math.sin((highlightAngle * Math.PI) / 180) * 10;
 
-  // Color cycling — richer palette
-  const hue1 = interpolate(frame, [0, 25, 50, 75, 100], [340, 200, 220, 260, 210]);
-  const hue2 = interpolate(frame, [0, 25, 50, 75, 100], [30, 210, 280, 230, 220]);
-  const lightness = interpolate(frame, [0, 25, 50, 75, 100], [55, 62, 48, 35, 58]);
+  // Richer color cycling — pastel sky/cloud palette like the reference HDRI sphere
+  const hue1 = interpolate(frame, [0, 25, 50, 75, 100], [220, 280, 320, 200, 240]);
+  const hue2 = interpolate(frame, [0, 25, 50, 75, 100], [340, 220, 260, 300, 200]);
+  const sat = interpolate(frame, [0, 50, 100], [45, 55, 40]);
+  const light = interpolate(frame, [0, 25, 50, 75, 100], [72, 68, 75, 65, 70]);
 
   // Flatten to brand-color dot
   const flattenStart = 60;
@@ -41,38 +42,39 @@ export const BrandReveal: React.FC<Props> = ({brandName, brandColor, accentColor
   const blackOpacity = flattenProgress;
   const currentSize = orbSize * enterScale * shrinkProgress;
 
-  // Background: subtle radial glow that follows the orb's color
-  const bgGlowOpacity = interpolate(frame, [0, 20, 70, 100], [0, 0.08, 0.06, 0], {
+  // Background glow
+  const bgGlowOpacity = interpolate(frame, [0, 20, 70, 100], [0, 0.12, 0.08, 0], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',
   });
 
   return (
     <AbsoluteFill style={{backgroundColor: '#FAFAFA', justifyContent: 'center', alignItems: 'center'}}>
-      {/* Background glow */}
+      {/* Large background glow */}
       <div
         style={{
           position: 'absolute',
-          width: '100%',
-          height: '100%',
-          background: `radial-gradient(circle at 50% 50%, hsl(${hue1}, 40%, 85%) 0%, transparent 50%)`,
+          width: '120%',
+          height: '120%',
+          background: `radial-gradient(circle at 50% 50%, hsl(${hue1}, 35%, 88%) 0%, transparent 45%)`,
           opacity: bgGlowOpacity,
         }}
       />
 
-      {/* Ambient glow around orb */}
+      {/* Ambient glow halo around orb */}
       <div
         style={{
           position: 'absolute',
-          width: currentSize * 2.8,
-          height: currentSize * 2.8,
+          width: currentSize * 3.5,
+          height: currentSize * 3.5,
           borderRadius: '50%',
-          background: `radial-gradient(circle, hsl(${hue1}, 50%, 80%, 0.12) 0%, transparent 70%)`,
-          opacity: gradientOpacity * 0.7,
+          background: `radial-gradient(circle, hsl(${hue1}, 40%, 85%, 0.15) 0%, transparent 60%)`,
+          opacity: gradientOpacity * 0.8,
+          filter: 'blur(20px)',
         }}
       />
 
-      {/* Gradient orb */}
+      {/* Main gradient orb — multiple layered gradients for depth */}
       <div
         style={{
           width: currentSize,
@@ -82,32 +84,63 @@ export const BrandReveal: React.FC<Props> = ({brandName, brandColor, accentColor
           opacity: gradientOpacity,
           background: `
             radial-gradient(circle at ${highlightX}% ${highlightY}%,
-              hsl(${hue1 + 40}, 70%, ${lightness + 25}%) 0%,
-              hsl(${hue1}, 65%, ${lightness + 10}%) 25%,
-              hsl(${hue2}, 60%, ${lightness}%) 55%,
-              hsl(${hue2 - 20}, 55%, ${lightness - 15}%) 80%,
-              hsl(${hue2 - 40}, 50%, ${lightness - 25}%) 100%)`,
+              hsl(${hue1 + 30}, ${sat + 15}%, ${light + 18}%) 0%,
+              hsl(${hue1}, ${sat + 10}%, ${light + 8}%) 20%,
+              hsl(${hue2}, ${sat}%, ${light}%) 45%,
+              hsl(${hue2 - 20}, ${sat - 5}%, ${light - 10}%) 70%,
+              hsl(${hue2 - 40}, ${sat - 10}%, ${light - 18}%) 100%)`,
           boxShadow: `
-            inset -${currentSize * 0.08}px -${currentSize * 0.05}px ${currentSize * 0.2}px hsl(${hue2}, 40%, ${lightness - 20}%, 0.4),
-            inset ${currentSize * 0.06}px ${currentSize * 0.04}px ${currentSize * 0.15}px hsl(${hue1}, 60%, ${lightness + 20}%, 0.3),
-            0 ${currentSize * 0.06}px ${currentSize * 0.25}px hsl(${hue2}, 40%, 40%, 0.2)`,
+            inset -${currentSize * 0.1}px -${currentSize * 0.06}px ${currentSize * 0.25}px hsl(${hue2}, 30%, ${light - 20}%, 0.5),
+            inset ${currentSize * 0.08}px ${currentSize * 0.05}px ${currentSize * 0.2}px hsl(${hue1}, 50%, ${light + 15}%, 0.4),
+            0 ${currentSize * 0.08}px ${currentSize * 0.35}px hsl(${hue2}, 35%, 50%, 0.25),
+            0 0 ${currentSize * 0.6}px hsl(${hue1}, 30%, 80%, 0.1)`,
         }}
       />
 
-      {/* Specular highlight */}
+      {/* Secondary gradient overlay for cloud-like depth */}
+      <div
+        style={{
+          width: currentSize,
+          height: currentSize,
+          borderRadius: '50%',
+          position: 'absolute',
+          opacity: gradientOpacity * 0.4,
+          background: `
+            radial-gradient(ellipse at ${70 - highlightX * 0.3}% ${60 - highlightY * 0.3}%,
+              hsl(${hue2 + 60}, 40%, 85%, 0.6) 0%,
+              transparent 50%)`,
+        }}
+      />
+
+      {/* Specular highlight — glassy reflection */}
       <div
         style={{
           position: 'absolute',
-          width: currentSize * 0.35,
-          height: currentSize * 0.25,
+          width: currentSize * 0.4,
+          height: currentSize * 0.28,
           borderRadius: '50%',
-          background: 'radial-gradient(ellipse, rgba(255,255,255,0.65) 0%, transparent 70%)',
-          opacity: gradientOpacity * 0.85,
-          transform: `translate(${-currentSize * 0.12}px, ${-currentSize * 0.15}px) rotate(-20deg)`,
+          background: 'radial-gradient(ellipse, rgba(255,255,255,0.75) 0%, rgba(255,255,255,0.2) 40%, transparent 70%)',
+          opacity: gradientOpacity * 0.9,
+          transform: `translate(${-currentSize * 0.1}px, ${-currentSize * 0.16}px) rotate(-15deg)`,
         }}
       />
 
-      {/* Solid brand-color dot */}
+      {/* Edge light rim — subtle bright edge on the light side */}
+      <div
+        style={{
+          width: currentSize,
+          height: currentSize,
+          borderRadius: '50%',
+          position: 'absolute',
+          opacity: gradientOpacity * 0.3,
+          background: `
+            radial-gradient(circle at ${highlightX + 10}% ${highlightY - 5}%,
+              rgba(255,255,255,0.3) 0%,
+              transparent 25%)`,
+        }}
+      />
+
+      {/* Solid brand-color dot (appears as orb flattens) */}
       <div
         style={{
           width: currentSize,
@@ -116,7 +149,7 @@ export const BrandReveal: React.FC<Props> = ({brandName, brandColor, accentColor
           backgroundColor: brandColor,
           position: 'absolute',
           opacity: blackOpacity,
-          boxShadow: blackOpacity > 0.5 ? `0 0 ${currentSize * 0.5}px ${brandColor}30` : 'none',
+          boxShadow: blackOpacity > 0.5 ? `0 0 ${currentSize * 0.6}px ${brandColor}25` : 'none',
         }}
       />
     </AbsoluteFill>

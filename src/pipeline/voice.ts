@@ -22,6 +22,243 @@ interface VoiceOptions {
   outputPath: string;
 }
 
+interface PerSegmentResult {
+  path: string;
+  totalDurationMs: number;
+  segmentDurationsMs: number[];
+  engineUsed: Engine;
+}
+
+/**
+ * Generate voice for each narration segment individually, measure exact durations,
+ * then concatenate into a single clean MP3. Returns per-segment timing for exact sync.
+ *
+ * Key: NO per-segment mastering. Raw segments are measured for timing, then
+ * concatenated with re-encoding (eliminates MP3 boundary clicks) and mastered ONCE.
+ */
+export async function generateVoicePerSegment(
+  segments: string[],
+  outputPath: string,
+  requestedEngine?: Engine,
+): Promise<PerSegmentResult> {
+  const engine = requestedEngine || detectEngine();
+  console.log(`  -> Per-segment voice generation with ${engine} (${segments.length} segments)`);
+
+  const {execSync} = await import('child_process');
+  const outputDir = path.dirname(outputPath);
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, {recursive: true});
+
+  // Generate raw segments (no mastering)
+  const prevSkip = process.env.SMIFT_SKIP_AUDIO_MASTERING;
+  process.env.SMIFT_SKIP_AUDIO_MASTERING = '1';
+
+  const segmentPaths: string[] = [];
+  const segmentDurationsMs: number[] = [];
+
+  try {
+    if (engine === 'chatterbox') {
+      const replicateKey = process.env.replicate_key;
+      if (replicateKey) {
+        const results = await generateSegmentsReplicateParallel(segments, outputDir, replicateKey);
+        for (const r of results) {
+          segmentPaths.push(r.path);
+          segmentDurationsMs.push(r.durationMs);
+        }
+      } else {
+        for (let i = 0; i < segments.length; i++) {
+          const segPath = path.join(outputDir, `_seg_${i}.mp3`);
+          const result = await generateVoice(segments[i], {outputPath: segPath, engine});
+          segmentPaths.push(segPath);
+          segmentDurationsMs.push(result.durationMs);
+          console.log(`     Segment ${i}: ${result.durationMs}ms`);
+        }
+      }
+    } else {
+      for (let i = 0; i < segments.length; i++) {
+        const segPath = path.join(outputDir, `_seg_${i}.mp3`);
+        const result = await generateVoice(segments[i], {outputPath: segPath, engine});
+        segmentPaths.push(segPath);
+        segmentDurationsMs.push(result.durationMs);
+        console.log(`     Segment ${i}: ${result.durationMs}ms`);
+      }
+    }
+  } finally {
+    // Restore mastering flag
+    if (prevSkip === undefined) delete process.env.SMIFT_SKIP_AUDIO_MASTERING;
+    else process.env.SMIFT_SKIP_AUDIO_MASTERING = prevSkip;
+  }
+
+  // Decode all segments to WAV for clean concatenation
+  const wavPaths: string[] = [];
+  for (let i = 0; i < segmentPaths.length; i++) {
+    const wavPath = path.join(outputDir, `_seg_${i}_raw.wav`);
+    execSync(`ffmpeg -i "${segmentPaths[i]}" -ar 48000 -ac 1 -acodec pcm_s16le "${wavPath}" -y 2>/dev/null`);
+    wavPaths.push(wavPath);
+  }
+
+  // Concatenate WAVs with 30ms crossfade between segments to eliminate clicks
+  const concatWav = path.join(outputDir, '_concat.wav');
+  if (wavPaths.length === 1) {
+    fs.copyFileSync(wavPaths[0], concatWav);
+  } else {
+    // Build ffmpeg filter: chain acrossfade between each pair
+    const inputs = wavPaths.map((p, i) => `-i "${p}"`).join(' ');
+    let filter = '';
+    const cf = 0.03; // 30ms crossfade — just enough to kill clicks, too short to affect timing
+    for (let i = 0; i < wavPaths.length - 1; i++) {
+      const inA = i === 0 ? '[0]' : `[a${i}]`;
+      const inB = `[${i + 1}]`;
+      const out = i === wavPaths.length - 2 ? '[out]' : `[a${i + 1}]`;
+      filter += `${inA}${inB}acrossfade=d=${cf}:c1=tri:c2=tri${out};`;
+    }
+    filter = filter.slice(0, -1); // remove trailing semicolon
+    execSync(
+      `ffmpeg ${inputs} -filter_complex "${filter}" -map "[out]" -ar 48000 -ac 1 -acodec pcm_s16le "${concatWav}" -y 2>/dev/null`,
+    );
+  }
+
+  // Encode to MP3 and master ONCE
+  execSync(
+    `ffmpeg -i "${concatWav}" -ar 48000 -ac 2 -codec:a libmp3lame -q:a 2 "${outputPath}" -y 2>/dev/null`,
+  );
+  await masterAudio(outputPath);
+
+  // Cleanup temp files
+  for (const p of segmentPaths) if (fs.existsSync(p)) fs.unlinkSync(p);
+  for (const p of wavPaths) if (fs.existsSync(p)) fs.unlinkSync(p);
+  if (fs.existsSync(concatWav)) fs.unlinkSync(concatWav);
+
+  const totalDurationMs = segmentDurationsMs.reduce((a, b) => a + b, 0);
+  console.log(`  -> Total voice: ${totalDurationMs}ms across ${segments.length} segments`);
+
+  return {path: outputPath, totalDurationMs, segmentDurationsMs, engineUsed: engine};
+}
+
+/**
+ * Fire all Replicate predictions in parallel, then poll them all.
+ * Much faster than sequential (~3s per segment vs ~3s * 8 = 24s).
+ */
+async function generateSegmentsReplicateParallel(
+  segments: string[],
+  outputDir: string,
+  apiKey: string,
+): Promise<{path: string; durationMs: number}[]> {
+  const {execSync} = await import('child_process');
+
+  // 1. Create predictions sequentially (Replicate free tier: burst of 1, 6/min)
+  console.log(`    -> Creating ${segments.length} Replicate predictions sequentially...`);
+  const predictions: {index: number; pollUrl: string; text: string}[] = [];
+
+  for (let i = 0; i < segments.length; i++) {
+    // Wait between requests to avoid rate limiting
+    if (i > 0) await new Promise(r => setTimeout(r, 1500));
+
+    let created = false;
+    for (let retry = 0; retry < 5; retry++) {
+      const res = await fetch('https://api.replicate.com/v1/models/resemble-ai/chatterbox/predictions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Token ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          input: {
+            prompt: segments[i],
+            exaggeration: 0.3,
+            cfg_weight: 0.5,
+          },
+        }),
+      });
+      if (res.status === 429) {
+        console.log(`    -> Rate limited on segment ${i}, waiting 15s (retry ${retry + 1})...`);
+        await new Promise(r => setTimeout(r, 15000));
+        continue;
+      }
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`Replicate create failed for segment ${i}: ${res.status} ${err}`);
+      }
+      const prediction = await res.json();
+      predictions.push({index: i, pollUrl: prediction.urls?.get as string, text: segments[i]});
+      console.log(`    -> Segment ${i} submitted`);
+      created = true;
+      break;
+    }
+    if (!created) {
+      throw new Error(`Replicate create failed for segment ${i} after 5 retries (rate limited)`);
+    }
+  }
+
+  // 2. Poll all predictions until done
+  console.log(`    -> Polling ${predictions.length} predictions...`);
+  const results: {index: number; audioUrl: string}[] = [];
+  const pending = new Set(predictions.map(p => p.index));
+
+  for (let attempt = 0; attempt < 90 && pending.size > 0; attempt++) {
+    await new Promise(r => setTimeout(r, 2000));
+
+    for (const pred of predictions) {
+      if (!pending.has(pred.index)) continue;
+
+      try {
+        const pollRes = await fetch(pred.pollUrl, {
+          headers: {'Authorization': `Token ${apiKey}`},
+        });
+        const raw = await pollRes.text();
+        const result = JSON.parse(raw.replace(/[\x00-\x1f]/g, ' '));
+
+        if (result.status === 'succeeded' && result.output) {
+          results.push({index: pred.index, audioUrl: result.output});
+          pending.delete(pred.index);
+          console.log(`     Segment ${pred.index} done (${pending.size} remaining)`);
+        } else if (result.status === 'failed') {
+          throw new Error(`Segment ${pred.index} failed: ${result.error}`);
+        }
+      } catch (e: any) {
+        if (e.message.startsWith('Segment')) throw e;
+      }
+    }
+  }
+
+  if (pending.size > 0) {
+    throw new Error(`Timed out waiting for segments: ${[...pending].join(', ')}`);
+  }
+
+  // 3. Download all audio, convert WAV→MP3, measure durations
+  results.sort((a, b) => a.index - b.index);
+  const output: {path: string; durationMs: number}[] = [];
+
+  for (const r of results) {
+    const audioRes = await fetch(r.audioUrl);
+    if (!audioRes.ok) throw new Error(`Failed to download segment ${r.index}: ${audioRes.status}`);
+
+    const wavPath = path.join(outputDir, `_seg_${r.index}.wav`);
+    const mp3Path = path.join(outputDir, `_seg_${r.index}.mp3`);
+    fs.writeFileSync(wavPath, Buffer.from(await audioRes.arrayBuffer()));
+
+    // Convert WAV → MP3 (no mastering — done once on final concat)
+    execSync(`ffmpeg -i "${wavPath}" -ar 48000 -ac 2 -codec:a libmp3lame -q:a 2 "${mp3Path}" -y 2>/dev/null`);
+    fs.unlinkSync(wavPath);
+
+    // Measure duration
+    let durationMs = 0;
+    try {
+      const probe = execSync(
+        `ffprobe -v quiet -print_format json -show_format "${mp3Path}"`,
+        {encoding: 'utf-8'},
+      );
+      durationMs = Math.round(parseFloat(JSON.parse(probe).format.duration) * 1000);
+    } catch {
+      durationMs = segments[r.index].split(/\s+/).length * 150;
+    }
+
+    output.push({path: mp3Path, durationMs});
+    console.log(`     Segment ${r.index}: ${durationMs}ms — "${segments[r.index].slice(0, 40)}..."`);
+  }
+
+  return output;
+}
+
 export async function generateVoice(
   text: string,
   options: VoiceOptions,
@@ -122,6 +359,7 @@ const CHATTERBOX_SPACES = [
 ];
 
 async function callChatterboxSpace(text: string): Promise<{spaceUrl: string; eventId: string; apiPath: string}> {
+  let nullErrorCount = 0;
   for (const space of CHATTERBOX_SPACES) {
     const apiUrl = `${space.url}/gradio_api/call/${space.api}`;
     const data = space.params === 7
@@ -143,6 +381,9 @@ async function callChatterboxSpace(text: string): Promise<{spaceUrl: string; eve
       const checkRes = await fetch(`${apiUrl}/${event_id}`);
       const checkBody = await checkRes.text();
       if (checkBody.includes('event: error')) {
+        if (checkBody.includes('data: null')) {
+          nullErrorCount += 1;
+        }
         console.log(`    -> Space ${space.url} returned error, trying next...`);
         continue;
       }
@@ -153,10 +394,106 @@ async function callChatterboxSpace(text: string): Promise<{spaceUrl: string; eve
       continue;
     }
   }
+  if (nullErrorCount >= 2) {
+    throw new Error(
+      'Chatterbox Spaces are reachable but rejecting generation (likely HuggingFace Zero GPU quota exhausted). ' +
+      'Try later, or use --voice=openai / --voice=elevenlabs to keep testing.',
+    );
+  }
   throw new Error('All Chatterbox HuggingFace Spaces are currently unavailable. Try again later.');
 }
 
 async function generateWithChatterbox(
+  text: string,
+  options: VoiceOptions,
+): Promise<{path: string; durationMs: number}> {
+  // Try Replicate first (fast, reliable), fall back to HF Spaces
+  const replicateKey = process.env.replicate_key;
+  if (replicateKey) {
+    try {
+      return await generateWithChatterboxReplicate(text, options, replicateKey);
+    } catch (e: any) {
+      console.log(`    -> Replicate failed: ${e.message}, trying HF Spaces...`);
+    }
+  }
+  return generateWithChatterboxHF(text, options);
+}
+
+// --- Chatterbox via Replicate API (fast, paid) ---
+
+async function generateWithChatterboxReplicate(
+  text: string,
+  options: VoiceOptions,
+  apiKey: string,
+): Promise<{path: string; durationMs: number}> {
+  const chunks = chunkText(text, 500); // Replicate handles longer chunks
+  const audioBuffers: Buffer[] = [];
+
+  for (let i = 0; i < chunks.length; i++) {
+    if (chunks.length > 1) console.log(`    -> Chunk ${i + 1}/${chunks.length}: "${chunks[i].slice(0, 50)}..."`);
+
+    // Create prediction
+    const createRes = await fetch('https://api.replicate.com/v1/models/resemble-ai/chatterbox/predictions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Token ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        input: {
+          prompt: chunks[i],
+          exaggeration: 0.3,
+          cfg_weight: 0.5,
+        },
+      }),
+    });
+
+    if (!createRes.ok) {
+      const err = await createRes.text();
+      throw new Error(`Replicate create failed ${createRes.status}: ${err}`);
+    }
+
+    const prediction = await createRes.json();
+    const predictionUrl = prediction.urls?.get;
+    if (!predictionUrl) throw new Error('No prediction URL returned');
+
+    if (i === 0) console.log(`    -> Using Replicate (resemble-ai/chatterbox)`);
+
+    // Poll for completion
+    let audioUrl: string | null = null;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      await new Promise(r => setTimeout(r, 2000));
+
+      const pollRes = await fetch(predictionUrl, {
+        headers: {'Authorization': `Token ${apiKey}`},
+      });
+      const raw = await pollRes.text();
+      const result = JSON.parse(raw.replace(/[\x00-\x1f]/g, ' '));
+
+      if (result.status === 'succeeded' && result.output) {
+        audioUrl = result.output;
+        break;
+      }
+      if (result.status === 'failed') {
+        throw new Error(`Replicate prediction failed: ${result.error}`);
+      }
+    }
+
+    if (!audioUrl) throw new Error('Replicate prediction timed out');
+
+    const audioResponse = await fetch(audioUrl);
+    if (!audioResponse.ok) {
+      throw new Error(`Failed to download Replicate audio: ${audioResponse.status}`);
+    }
+    audioBuffers.push(Buffer.from(await audioResponse.arrayBuffer()));
+  }
+
+  return finishChatterboxAudio(audioBuffers, text, options);
+}
+
+// --- Chatterbox via HuggingFace Spaces (free, unreliable) ---
+
+async function generateWithChatterboxHF(
   text: string,
   options: VoiceOptions,
 ): Promise<{path: string; durationMs: number}> {
@@ -167,7 +504,7 @@ async function generateWithChatterbox(
     if (chunks.length > 1) console.log(`    -> Chunk ${i + 1}/${chunks.length}: "${chunks[i].slice(0, 50)}..."`);
 
     const {spaceUrl, eventId, apiPath} = await callChatterboxSpace(chunks[i]);
-    if (i === 0) console.log(`    -> Using space: ${spaceUrl}`);
+    if (i === 0) console.log(`    -> Using HF Space: ${spaceUrl}`);
 
     const audioUrl = await pollChatterboxResult(eventId, apiPath);
 
@@ -178,6 +515,16 @@ async function generateWithChatterbox(
     audioBuffers.push(Buffer.from(await audioResponse.arrayBuffer()));
   }
 
+  return finishChatterboxAudio(audioBuffers, text, options);
+}
+
+// --- Shared: concatenate chunks + convert WAV → MP3 ---
+
+async function finishChatterboxAudio(
+  audioBuffers: Buffer[],
+  text: string,
+  options: VoiceOptions,
+): Promise<{path: string; durationMs: number}> {
   let finalBuffer: Buffer;
   if (audioBuffers.length === 1) {
     finalBuffer = audioBuffers[0];
@@ -192,7 +539,7 @@ async function generateWithChatterbox(
   fs.writeFileSync(wavPath, finalBuffer);
 
   const {execSync} = await import('child_process');
-  execSync(`ffmpeg -i "${wavPath}" -codec:a libmp3lame -b:a 192k "${options.outputPath}" -y 2>/dev/null`);
+  execSync(`ffmpeg -i "${wavPath}" -ar 48000 -ac 2 -codec:a libmp3lame -q:a 2 "${options.outputPath}" -y 2>/dev/null`);
   fs.unlinkSync(wavPath);
 
   return saveAndMeasure(fs.readFileSync(options.outputPath), text, options.outputPath);
@@ -227,7 +574,14 @@ async function pollChatterboxResult(eventId: string, apiPath: string): Promise<s
           }
         }
         if (lines[i] === 'event: error' && i + 1 < lines.length) {
-          throw new Error(`Chatterbox generation error: ${lines[i + 1]}`);
+          const payload = lines[i + 1].replace(/^data:\s*/, '').trim();
+          if (payload === 'null') {
+            throw new Error(
+              'Chatterbox is reachable but rejected generation (common on HuggingFace Zero GPU quota exhaustion). ' +
+              'Try later, or run with --voice=openai / --voice=elevenlabs for now.',
+            );
+          }
+          throw new Error(`Chatterbox generation error: ${payload}`);
         }
       }
     } catch (e: any) {
@@ -301,6 +655,8 @@ async function saveAndMeasure(
     fs.writeFileSync(outputPath, buffer);
   }
 
+  await masterAudio(outputPath);
+
   let durationMs = 0;
   try {
     const {execSync} = await import('child_process');
@@ -315,4 +671,23 @@ async function saveAndMeasure(
   }
 
   return {path: outputPath, durationMs};
+}
+
+async function masterAudio(outputPath: string): Promise<void> {
+  if (process.env.SMIFT_SKIP_AUDIO_MASTERING === '1') return;
+  if (!outputPath.endsWith('.mp3')) return;
+
+  try {
+    const {execSync} = await import('child_process');
+    const tmpPath = outputPath.replace(/\.mp3$/, '.master.mp3');
+    execSync(
+      `ffmpeg -i "${outputPath}" -af "highpass=f=70,lowpass=f=12000,loudnorm=I=-16:TP=-1.5:LRA=11" ` +
+      `-ar 48000 -ac 2 -codec:a libmp3lame -q:a 2 "${tmpPath}" -y 2>/dev/null`,
+    );
+    if (fs.existsSync(tmpPath)) {
+      fs.renameSync(tmpPath, outputPath);
+    }
+  } catch {
+    // If mastering fails we still keep original audio.
+  }
 }

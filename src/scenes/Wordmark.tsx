@@ -13,59 +13,43 @@ export const Wordmark: React.FC<Props> = ({brandName, brandColor, tagline}) => {
 
   // Name scales in with a satisfying spring
   const nameScale = spring({frame, fps, config: {damping: 10, stiffness: 50, mass: 1.2}});
-  const nameOpacity = interpolate(frame, [0, 8], [0, 1], {extrapolateRight: 'clamp'});
+  const nameOpacity = interpolate(frame, [0, 6], [0, 1], {extrapolateRight: 'clamp'});
 
   // Tagline slides up after name settles
-  const taglineDelay = 18;
+  const taglineDelay = 16;
   const taglineProgress = frame > taglineDelay
     ? spring({frame: frame - taglineDelay, fps, config: {damping: 14, stiffness: 80}})
     : 0;
-  const taglineY = interpolate(taglineProgress, [0, 1], [20, 0]);
-
-  // Subtle underline accent draws in
-  const lineDelay = 12;
-  const lineWidth = frame > lineDelay
-    ? interpolate(frame, [lineDelay, lineDelay + 20], [0, 180], {extrapolateRight: 'clamp'})
-    : 0;
+  const taglineY = interpolate(taglineProgress, [0, 1], [16, 0]);
 
   return (
     <AbsoluteFill style={{backgroundColor: '#FAFAFA', justifyContent: 'center', alignItems: 'center'}}>
-      <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20}}>
+      <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 28}}>
+        {/* Brand name — large and bold */}
         <div
           style={{
-            fontSize: 100,
-            fontWeight: 800,
+            fontSize: 120,
+            fontWeight: 900,
             fontFamily: FONT_DISPLAY,
             color: brandColor,
-            letterSpacing: '-0.04em',
+            letterSpacing: '-0.05em',
             transform: `scale(${nameScale})`,
             opacity: nameOpacity,
           }}
         >
-          {brandName.toLowerCase()}
+          {brandName}
         </div>
 
-        {/* Accent line */}
+        {/* Tagline */}
         <div
           style={{
-            width: lineWidth,
-            height: 3,
-            backgroundColor: brandColor,
-            borderRadius: 2,
-            opacity: 0.3,
-            marginTop: -8,
-          }}
-        />
-
-        <div
-          style={{
-            fontSize: 24,
+            fontSize: 26,
             fontWeight: 400,
             fontFamily: FONT_BODY,
-            color: '#888',
+            color: '#777',
             opacity: taglineProgress,
             transform: `translateY(${taglineY}px)`,
-            letterSpacing: '0.04em',
+            letterSpacing: '0.03em',
           }}
         >
           {tagline}

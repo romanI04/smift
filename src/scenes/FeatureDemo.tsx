@@ -9,15 +9,15 @@ interface Props {
   accentColor: string;
 }
 
-// Shared mockup card style
-const cardStyle = {
-  width: 660,
-  borderRadius: 14,
+// Card style with signature blue glow (like reference's "powered by voice" glow)
+const makeCardStyle = (accentColor: string) => ({
+  width: 680,
+  borderRadius: 16,
   overflow: 'hidden' as const,
-  boxShadow: '0 8px 40px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.06)',
+  boxShadow: `0 8px 40px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.06), 0 0 80px ${accentColor}12, 0 0 160px ${accentColor}08`,
   border: '1px solid rgba(0,0,0,0.06)',
   fontFamily: 'inherit',
-};
+});
 
 // --- UI Mockups ---
 
@@ -31,7 +31,7 @@ const EmailMockup: React.FC<{lines: string[]; charsToShow: number; accentColor: 
   const body = splitLines.slice(1).join('\n');
 
   return (
-    <div style={{...cardStyle, backgroundColor: 'white'}}>
+    <div style={{...makeCardStyle(accentColor), backgroundColor: 'white'}}>
       <div style={{padding: '14px 20px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
         <span style={{fontSize: 14, color: '#444', fontWeight: 500, fontFamily: FONT_BODY}}>New message</span>
         <div style={{display: 'flex', gap: 12}}>
@@ -67,7 +67,7 @@ const CodeMockup: React.FC<{lines: string[]; charsToShow: number; accentColor: s
   const visibleText = allText.slice(0, charsToShow);
 
   return (
-    <div style={{...cardStyle, backgroundColor: '#1a1b26'}}>
+    <div style={{...makeCardStyle(accentColor), backgroundColor: '#1a1b26'}}>
       <div style={{padding: '10px 16px', backgroundColor: '#16161e', display: 'flex', alignItems: 'center', gap: 8}}>
         <div style={{display: 'flex', gap: 6}}>
           <div style={{width: 12, height: 12, borderRadius: 6, backgroundColor: '#ff5f56'}} />
@@ -102,7 +102,7 @@ const AnalyticsMockup: React.FC<{lines: string[]; charsToShow: number; accentCol
   const splitLines = visibleText.split('\n').filter(l => l.trim());
 
   return (
-    <div style={{...cardStyle, backgroundColor: 'white'}}>
+    <div style={{...makeCardStyle(accentColor), backgroundColor: 'white'}}>
       <div style={{padding: '16px 20px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
         <span style={{fontSize: 15, fontWeight: 600, color: '#111', fontFamily: FONT_DISPLAY}}>Dashboard</span>
         <div style={{padding: '4px 12px', backgroundColor: '#f5f5f5', borderRadius: 6}}>
@@ -141,7 +141,7 @@ const ChatMockup: React.FC<{lines: string[]; charsToShow: number; accentColor: s
   const visibleText = allText.slice(0, charsToShow);
 
   return (
-    <div style={{...cardStyle, backgroundColor: 'white'}}>
+    <div style={{...makeCardStyle(accentColor), backgroundColor: 'white'}}>
       <div style={{padding: '14px 20px', borderBottom: '1px solid #eee', display: 'flex', alignItems: 'center', gap: 10}}>
         <div style={{width: 32, height: 32, borderRadius: 16, backgroundColor: accentColor, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
           <span style={{fontSize: 14, color: 'white', fontWeight: 600, fontFamily: FONT_BODY}}>T</span>
@@ -183,7 +183,7 @@ const CalendarMockup: React.FC<{lines: string[]; charsToShow: number; accentColo
   const hours = ['9 AM', '10 AM', '11 AM', '12 PM', '1 PM'];
 
   return (
-    <div style={{...cardStyle, backgroundColor: 'white'}}>
+    <div style={{...makeCardStyle(accentColor), backgroundColor: 'white'}}>
       <div style={{padding: '14px 20px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
         <span style={{fontSize: 16, fontWeight: 600, color: '#111', fontFamily: FONT_DISPLAY}}>February 2026</span>
         <div style={{padding: '4px 12px', backgroundColor: accentColor, borderRadius: 6}}>
@@ -223,7 +223,7 @@ const GenericMockup: React.FC<{lines: string[]; charsToShow: number; accentColor
   const splitLines = visibleText.split('\n').filter(l => l.trim());
 
   return (
-    <div style={{...cardStyle, backgroundColor: 'white'}}>
+    <div style={{...makeCardStyle(accentColor), backgroundColor: 'white'}}>
       <div style={{padding: '18px 24px', borderBottom: '1px solid #eee'}}>
         <span style={{fontSize: 16, fontWeight: 600, color: '#111', fontFamily: FONT_DISPLAY}}>{splitLines[0] || ''}</span>
       </div>
@@ -247,35 +247,42 @@ const GenericMockup: React.FC<{lines: string[]; charsToShow: number; accentColor
 const MOCKUP_MAP: Record<string, React.FC<{lines: string[]; charsToShow: number; accentColor: string}>> = {
   mail: EmailMockup,
   code: CodeMockup,
+  docs: CodeMockup,
   analytics: AnalyticsMockup,
+  finance: AnalyticsMockup,
+  commerce: AnalyticsMockup,
   chat: ChatMockup,
+  social: ChatMockup,
+  support: ChatMockup,
+  ai: ChatMockup,
   calendar: CalendarMockup,
+  health: GenericMockup,
+  media: GenericMockup,
   generic: GenericMockup,
 };
 
-// --- Audio Bars ---
+// --- Audio Bars (MUCH bigger, matching reference) ---
 const AudioBars: React.FC<{frame: number; active: boolean}> = ({frame, active}) => {
   const barConfigs = [
-    {baseHeight: 0.3, width: 3.5},
-    {baseHeight: 0.55, width: 4.5},
-    {baseHeight: 1.0, width: 5.5},
-    {baseHeight: 0.45, width: 4.5},
-    {baseHeight: 0.75, width: 4.5},
-    {baseHeight: 0.35, width: 3.5},
+    {baseHeight: 0.35, width: 10},
+    {baseHeight: 0.7, width: 12},
+    {baseHeight: 1.0, width: 14},
+    {baseHeight: 0.5, width: 12},
+    {baseHeight: 0.8, width: 10},
   ];
 
   return (
-    <div style={{display: 'flex', alignItems: 'center', gap: 2.5, height: 32}}>
+    <div style={{display: 'flex', alignItems: 'center', gap: 5, height: 50}}>
       {barConfigs.map(({baseHeight, width}, i) => {
         const noise = smoothNoise(frame, i);
-        const h = active ? Math.max(3, baseHeight * noise * 32) : 3;
+        const h = active ? Math.max(6, baseHeight * noise * 50) : 6;
         return (
           <div
             key={i}
             style={{
               width,
               height: h,
-              backgroundColor: 'rgba(255,255,255,0.9)',
+              backgroundColor: 'rgba(255,255,255,0.95)',
               borderRadius: width / 2,
             }}
           />
@@ -287,16 +294,24 @@ const AudioBars: React.FC<{frame: number; active: boolean}> = ({frame, active}) 
 
 // --- Icon in pill ---
 const PillIcon: React.FC<{icon: string; accentColor: string}> = ({icon, accentColor}) => {
-  const s = {width: 24, height: 24, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center'} as const;
+  const s = {width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center'} as const;
   const icons: Record<string, React.ReactNode> = {
-    mail: <div style={{...s, backgroundColor: '#4285f4'}}><span style={{fontSize: 11, color: 'white'}}>✉</span></div>,
-    code: <div style={{...s, backgroundColor: '#007ACC'}}><span style={{fontSize: 12, color: 'white', fontFamily: 'monospace', fontWeight: 700}}>&lt;/&gt;</span></div>,
-    analytics: <div style={{...s, backgroundColor: '#22C55E'}}><span style={{fontSize: 12, color: 'white'}}>◈</span></div>,
-    chat: <div style={{...s, backgroundColor: '#8B5CF6'}}><span style={{fontSize: 12, color: 'white'}}>◉</span></div>,
-    calendar: <div style={{...s, backgroundColor: '#EF4444'}}><span style={{fontSize: 12, color: 'white', fontWeight: 700, fontFamily: FONT_BODY}}>10</span></div>,
-    generic: <div style={{...s, backgroundColor: accentColor}}><span style={{fontSize: 12, color: 'white'}}>◆</span></div>,
+    mail: <div style={{...s, backgroundColor: '#4285f4'}}><span style={{fontSize: 16, color: 'white'}}>✉</span></div>,
+    code: <div style={{...s, backgroundColor: '#007ACC'}}><span style={{fontSize: 16, color: 'white', fontFamily: 'monospace', fontWeight: 700}}>&lt;/&gt;</span></div>,
+    docs: <div style={{...s, backgroundColor: '#2563EB'}}><span style={{fontSize: 16, color: 'white'}}>▤</span></div>,
+    analytics: <div style={{...s, backgroundColor: '#22C55E'}}><span style={{fontSize: 16, color: 'white'}}>◈</span></div>,
+    finance: <div style={{...s, backgroundColor: '#16A34A'}}><span style={{fontSize: 16, color: 'white'}}>$</span></div>,
+    commerce: <div style={{...s, backgroundColor: '#F59E0B'}}><span style={{fontSize: 16, color: 'white'}}>🛒</span></div>,
+    chat: <div style={{...s, backgroundColor: '#8B5CF6'}}><span style={{fontSize: 16, color: 'white'}}>◉</span></div>,
+    support: <div style={{...s, backgroundColor: '#0EA5E9'}}><span style={{fontSize: 16, color: 'white'}}>☏</span></div>,
+    ai: <div style={{...s, backgroundColor: '#4F46E5'}}><span style={{fontSize: 16, color: 'white'}}>✶</span></div>,
+    social: <div style={{...s, backgroundColor: '#EC4899'}}><span style={{fontSize: 16, color: 'white'}}>◎</span></div>,
+    calendar: <div style={{...s, backgroundColor: '#EF4444'}}><span style={{fontSize: 16, color: 'white', fontWeight: 700, fontFamily: FONT_BODY}}>10</span></div>,
+    health: <div style={{...s, backgroundColor: '#DC2626'}}><span style={{fontSize: 16, color: 'white'}}>✚</span></div>,
+    media: <div style={{...s, backgroundColor: '#7C3AED'}}><span style={{fontSize: 16, color: 'white'}}>▶</span></div>,
+    generic: <div style={{...s, backgroundColor: accentColor}}><span style={{fontSize: 16, color: 'white'}}>◆</span></div>,
   };
-  return <>{icons[icon] || <div style={{...s, backgroundColor: accentColor}}><span style={{fontSize: 12, color: 'white'}}>●</span></div>}</>;
+  return <>{icons[icon] || <div style={{...s, backgroundColor: accentColor}}><span style={{fontSize: 16, color: 'white'}}>●</span></div>}</>;
 };
 
 // --- Main Component ---
@@ -304,14 +319,14 @@ export const FeatureDemo: React.FC<Props> = ({feature, brandColor, accentColor})
   const frame = useCurrentFrame();
   const {fps, durationInFrames} = useVideoConfig();
 
-  // Pill enters — expo ease (slow start, confident snap)
-  const pillProgress = smoothValue(frame, 0, 20, 0, 1, easeOutExpo);
-  const pillY = interpolate(pillProgress, [0, 1], [30, 0]);
+  // Pill enters first — centered, expo ease
+  const pillProgress = smoothValue(frame, 0, 18, 0, 1, easeOutExpo);
+  const pillY = interpolate(pillProgress, [0, 1], [20, 0]);
 
-  // Card enters — slides up from below with spring
-  const cardProgress = smoothValue(frame, 6, 30, 0, 1, easeOutCubic);
-  const cardY = interpolate(cardProgress, [0, 1], [50, 0]);
-  const cardScale = interpolate(cardProgress, [0, 1], [0.92, 1]);
+  // Card enters after pill — slides up from below
+  const cardProgress = smoothValue(frame, 8, 30, 0, 1, easeOutCubic);
+  const cardY = interpolate(cardProgress, [0, 1], [40, 0]);
+  const cardScale = interpolate(cardProgress, [0, 1], [0.94, 1]);
 
   // Variable-speed typing
   const typeStart = 28;
@@ -324,60 +339,79 @@ export const FeatureDemo: React.FC<Props> = ({feature, brandColor, accentColor})
   const captionOpacity = smoothValue(frame, captionShowFrame, captionShowFrame + 18, 0, 1, easeOutCubic);
 
   // Subtle card float during typing
-  const cardFloat = typingDone ? 0 : Math.sin(frame * 0.04) * 1.5;
+  const cardFloat = typingDone ? 0 : Math.sin(frame * 0.04) * 1.2;
 
   const Mockup = MOCKUP_MAP[feature.icon] || GenericMockup;
 
   return (
     <AbsoluteFill style={{backgroundColor: '#FAFAFA', justifyContent: 'center', alignItems: 'center'}}>
-      {/* Card */}
+      {/* Blue ambient glow behind the whole assembly */}
       <div
         style={{
           position: 'absolute',
-          top: '7%',
-          transform: `scale(${cardScale}) translateY(${cardY + cardFloat}px)`,
+          width: 800,
+          height: 600,
+          background: `radial-gradient(ellipse at center, ${accentColor}15 0%, transparent 70%)`,
+          filter: 'blur(60px)',
           opacity: cardProgress,
-          transformOrigin: 'center bottom',
         }}
-      >
-        <Mockup lines={feature.demoLines} charsToShow={charsToShow} accentColor={accentColor} />
-      </div>
+      />
 
-      {/* Dynamic Island Pill */}
+      {/* Centered column: card on top, pill below */}
       <div
         style={{
-          position: 'absolute',
-          bottom: '11%',
           display: 'flex',
+          flexDirection: 'column',
           alignItems: 'center',
-          gap: 12,
-          backgroundColor: brandColor,
-          borderRadius: 50,
-          padding: '10px 22px',
-          transform: `translateY(${pillY}px)`,
-          opacity: pillProgress,
-          boxShadow: `0 4px 20px ${brandColor}30`,
+          gap: 24,
         }}
       >
-        <PillIcon icon={feature.icon} accentColor={accentColor} />
-        <AudioBars frame={frame} active={!typingDone && frame > typeStart} />
+        {/* Card */}
+        <div
+          style={{
+            transform: `scale(${cardScale}) translateY(${cardY + cardFloat}px)`,
+            opacity: cardProgress,
+            transformOrigin: 'center bottom',
+          }}
+        >
+          <Mockup lines={feature.demoLines} charsToShow={charsToShow} accentColor={accentColor} />
+        </div>
 
-        {/* Caption slides in */}
-        {captionOpacity > 0.01 && (
-          <span
-            style={{
-              color: 'white',
-              fontSize: 16,
-              fontWeight: 500,
-              fontFamily: FONT_BODY,
-              marginLeft: 2,
-              opacity: captionOpacity,
-              transform: `translateX(${(1 - captionOpacity) * 12}px)`,
-            }}
-          >
-            {feature.caption}
-          </span>
-        )}
+        {/* Dynamic Island Pill — LARGE, centered below card */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 16,
+            backgroundColor: brandColor,
+            borderRadius: 60,
+            padding: '18px 36px',
+            transform: `translateY(${pillY}px)`,
+            opacity: pillProgress,
+            boxShadow: `0 8px 40px ${brandColor}40, 0 0 80px ${brandColor}12`,
+          }}
+        >
+          <PillIcon icon={feature.icon} accentColor={accentColor} />
+          <AudioBars frame={frame} active={!typingDone && frame > typeStart} />
+
+          {/* Caption slides in */}
+          {captionOpacity > 0.01 && (
+            <span
+              style={{
+                color: 'white',
+                fontSize: 20,
+                fontWeight: 600,
+                fontFamily: FONT_BODY,
+                marginLeft: 4,
+                opacity: captionOpacity,
+                transform: `translateX(${(1 - captionOpacity) * 12}px)`,
+                letterSpacing: '-0.01em',
+              }}
+            >
+              {feature.caption}
+            </span>
+          )}
+        </div>
       </div>
     </AbsoluteFill>
   );

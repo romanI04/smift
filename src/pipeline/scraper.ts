@@ -31,54 +31,70 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
   const html = await res.text();
   const $ = cheerio.load(html);
 
-  // Remove scripts, styles, nav, footer for cleaner text
-  $('script, style, nav, footer, header').remove();
+  // Capture CSS before removing style tags.
+  const styleText = [
+    $('style').text(),
+    $('[style]')
+      .map((_, el) => $(el).attr('style'))
+      .get()
+      .join(' '),
+  ].join(' ');
 
   // Title
-  const title = $('title').text().trim();
+  const title = normalizeWhitespace($('title').text());
 
   // Meta
-  const description = $('meta[name="description"]').attr('content') || '';
-  const ogTitle = $('meta[property="og:title"]').attr('content') || '';
-  const ogDescription = $('meta[property="og:description"]').attr('content') || '';
+  const description = normalizeWhitespace($('meta[name="description"]').attr('content') || '');
+  const ogTitle = normalizeWhitespace($('meta[property="og:title"]').attr('content') || '');
+  const ogDescription = normalizeWhitespace($('meta[property="og:description"]').attr('content') || '');
   const ogImage = $('meta[property="og:image"]').attr('content') || '';
+
+  // Remove noisy elements for cleaner semantic text extraction.
+  $('script, style, noscript, svg, nav, footer, header, iframe').remove();
 
   // Headings (h1, h2, h3)
   const headings: string[] = [];
   $('h1, h2, h3').each((_, el) => {
-    const text = $(el).text().trim();
+    const text = normalizeWhitespace($(el).text());
     if (text && text.length > 3 && text.length < 200) {
       headings.push(text);
     }
   });
 
-  // Feature-like content (li items, cards with short text)
-  const features: string[] = [];
-  $('li, [class*="feature"], [class*="benefit"], [class*="card"]').each((_, el) => {
-    const text = $(el).text().trim();
-    if (text && text.length > 10 && text.length < 300 && !features.includes(text)) {
-      features.push(text);
-    }
+  // Feature-like content from headings, list items, and lead paragraphs.
+  const candidates: string[] = [];
+  $('h2, h3, li, p').each((_, el) => {
+    const text = normalizeWhitespace($(el).text());
+    if (!text) return;
+    candidates.push(text);
   });
 
+  const features: string[] = [];
+  for (const text of candidates) {
+    if (looksLikeFeature(text) && !features.includes(text)) {
+      features.push(text);
+    }
+  }
+
   // Body text (first 3000 chars of visible text)
-  const bodyText = $('body').text().replace(/\s+/g, ' ').trim().slice(0, 3000);
+  const bodyText = normalizeWhitespace($('body').text()).slice(0, 3200);
 
   // Colors from inline styles and CSS custom properties
   const colors: string[] = [];
   const colorRegex = /#[0-9a-fA-F]{3,8}|rgb\([^)]+\)|hsl\([^)]+\)/g;
-  const styleText = $('style').text() + ' ' + ($('[style]').map((_, el) => $(el).attr('style')).get().join(' '));
   const foundColors = styleText.match(colorRegex) || [];
   // Deduplicate and take top 10
-  const uniqueColors = [...new Set(foundColors)].slice(0, 10);
+  const uniqueColors = [...new Set(foundColors)]
+    .filter((c) => !['#fff', '#ffffff', '#000', '#000000'].includes(c.toLowerCase()))
+    .slice(0, 12);
   colors.push(...uniqueColors);
 
   // Important links
   const links: string[] = [];
   $('a[href]').each((_, el) => {
     const href = $(el).attr('href') || '';
-    const text = $(el).text().trim();
-    if (text && href && !href.startsWith('#') && text.length < 100) {
+    const text = normalizeWhitespace($(el).text());
+    if (text && href && !href.startsWith('#') && text.length < 120) {
       links.push(`${text}: ${href}`);
     }
   });
@@ -97,4 +113,51 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
     links: links.slice(0, 20),
     domain,
   };
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function looksLikeFeature(text: string): boolean {
+  if (text.length < 18 || text.length > 220) return false;
+  if (!/[a-zA-Z]/.test(text)) return false;
+
+  const lower = text.toLowerCase();
+  const bannedSnippets = [
+    'cookie',
+    'privacy policy',
+    'terms of service',
+    'sign in',
+    'log in',
+    'download on the',
+    'all rights reserved',
+    'subscribe',
+  ];
+  if (bannedSnippets.some((b) => lower.includes(b))) return false;
+
+  // Prefer lines that look like value propositions.
+  const valueWords = [
+    'automate',
+    'track',
+    'manage',
+    'analyze',
+    'secure',
+    'faster',
+    'save',
+    'reduce',
+    'improve',
+    'real-time',
+    'insights',
+    'workflow',
+    'team',
+    'customers',
+    'orders',
+    'payments',
+    'support',
+    'supply',
+    'health',
+    'learning',
+  ];
+  return valueWords.some((w) => lower.includes(w)) || /\b(with|for|without|across)\b/.test(lower);
 }

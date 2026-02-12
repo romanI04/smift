@@ -13,10 +13,10 @@ dotenv.config({path: path.resolve(__dirname, '../../../../.env')});
 async function run() {
   const args = process.argv.slice(2);
   const voiceFlag = args.find(a => a.startsWith('--voice='));
-  const voiceEngine = voiceFlag ? voiceFlag.split('=')[1] as 'elevenlabs' | 'openai' : undefined;
+  const voiceEngine = voiceFlag ? voiceFlag.split('=')[1] as 'elevenlabs' | 'openai' | 'chatterbox' : undefined;
   const url = args.find(a => !a.startsWith('--'));
   if (!url) {
-    console.error('Usage: npm run generate -- <url> [--voice=elevenlabs|openai]');
+    console.error('Usage: npm run generate -- <url> [--voice=elevenlabs|openai|chatterbox]');
     process.exit(1);
   }
 

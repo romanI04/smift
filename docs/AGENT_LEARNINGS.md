@@ -45,6 +45,13 @@
 - Feature scene visuals are now pack-driven. If a pack looks off, start in `src/scenes/FeatureDemo.tsx` (`DOMAIN_VISUAL_THEMES` + `selectMockup`) before touching pipeline prompts.
 - Feature naming is now canonicalized in `grounding.ts`; avoid adding ad-hoc name cleanup logic inside scriptgen/autofix.
 - Use `canonicalizeIntegrations()` everywhere integrations are mutated. Mixing raw + canonical tool names increases false warnings.
+- Render relevance guard runs post-generation. If you need raw model behavior for debugging, run with `--no-relevance-guard`.
+- Guard may be intentionally skipped if it regresses quality gates; check `quality.relevanceGuard` in output JSON for rollback details.
+
+## Real Benchmarking
+
+- `npm run eval:real -- --limit=N` is the fastest way to track real-domain pack drift and script quality together.
+- Track both metrics: quality pass-rate can stay high while pack accuracy drops; both need to be monitored.
 
 ## Known Gaps / Next Work
 
@@ -56,3 +63,4 @@
 - Add domain-aware terms to scraper extraction (e.g. schema.org / JSON-LD hints) to improve pack confidence on sparse landing pages.
 - Add CI gating for `npm run eval:packs` and fail PRs on pack-routing regressions.
 - Reduce repetitive feature-name roots on sparse single-theme sites (e.g. TFT pages repeating "Teamfight Tactics" variants).
+- Improve b2b-saas recall on marketing-heavy sites that under-signal operational terms (observed in short `eval:real` runs).

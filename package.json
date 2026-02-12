@@ -9,6 +9,7 @@
     "generate": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/run.ts",
     "eval": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/eval.ts",
     "eval:packs": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/eval-packs.ts",
+    "eval:real": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/eval-real.ts",
     "serve": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/server/serve.ts"
   },
   "dependencies": {

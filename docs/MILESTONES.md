@@ -108,3 +108,16 @@
   - numeric-signal expectations when source numbers exist
   - integration overlap accepts either pack defaults or grounded integration candidates.
 - Pipeline logging now reports grounded feature-name candidate counts.
+
+### M10 - Render Relevance Guard + Real URL Benchmark Harness
+
+- Added render relevance guard stage (`src/pipeline/relevance-guard.ts`) and wired it into `generate` flow:
+  - normalizes feature names/icons/captions/demo lines before output/render
+  - canonicalizes integrations and aligns CTA domain
+  - sanitizes forbidden domain terms in visual-facing content
+  - rolls back guard output automatically if it would fail quality gates
+- Added `--no-relevance-guard` flag for controlled A/B debugging.
+- Added real benchmark suite (`src/pipeline/benchmark-real-urls.ts`) with expected pack labels across domain families.
+- Added real benchmark runner (`src/pipeline/eval-real.ts`) + `npm run eval:real`:
+  - reports pass-rate, average score, and expected-pack accuracy
+  - outputs JSON/CSV summaries in `out/`.

@@ -20,6 +20,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `npm run generate -- <url> --strict`: strict quality mode
 - `npm run eval -- --limit=10`: benchmark batch summary (JSON + CSV)
 - `npm run eval:packs`: offline domain-pack regression suite
+- `npm run eval:real -- --limit=20`: real-URL benchmark with expected-pack accuracy
 - `npm run serve`: local self-serve queue + web UI (`http://localhost:3030`)
   - quality-only status view: `GET /api/jobs/:id/quality` (or `GET /api/jobs/:id?view=quality`)
 
@@ -36,6 +37,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `--max-script-attempts=<n>`
 - `--allow-low-quality`
 - `--no-autofix`
+- `--no-relevance-guard`
 - `--skip-render`
 
 ## Outputs
@@ -66,7 +68,9 @@ Generated artifacts land in `out/`:
 - Script generation prompt and post-processing use grounding hints to reduce off-domain wording.
 - Feature names are canonicalized against grounded candidates; noisy labels fall back to synthesized term-based names.
 - Integrations are canonicalized through a known-tool resolver + alias mapping.
+- A render relevance guard runs before output/render to enforce icon/name/demo/integration consistency.
 - Quality report includes a `grounding` block with coverage and match stats so relevance is auditable per run.
+- Quality report includes `relevanceGuard` actions/warnings for traceability.
 
 ## Docs
 

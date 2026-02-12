@@ -7,6 +7,7 @@ import {buildFallbackScript} from './fallback-script';
 import {autoFixScriptQuality} from './autofix';
 import type {ScriptResult} from './script-types';
 import {extractGroundingHints, summarizeGroundingUsage, type GroundingHints} from './grounding';
+import {applyRenderRelevanceGuard} from './relevance-guard';
 import {
   DOMAIN_PACK_IDS,
   selectDomainPack,
@@ -60,6 +61,7 @@ async function run() {
   const maxScriptAttempts = parseNumberArg(args, '--max-script-attempts', 4);
   const allowLowQuality = args.includes('--allow-low-quality');
   const autoFix = !args.includes('--no-autofix');
+  const relevanceGuardEnabled = !args.includes('--no-relevance-guard');
   const strictFlag = args.includes('--strict');
   const skipRender = args.includes('--skip-render');
   const url = args.find((a) => !a.startsWith('--'));
@@ -69,7 +71,7 @@ async function run() {
       'Usage: npm run generate -- <url> [--voice=none|elevenlabs|openai|chatterbox] [--quality=draft|yc] ' +
       '[--template=auto|yc-saas|product-demo|founder-story] [--pack=auto|<pack-id>] [--voice-mode=single|segmented] ' +
       '[--quality-mode=standard|strict] [--strict] [--max-warnings=3] [--min-quality=74] ' +
-      '[--max-script-attempts=4] [--allow-low-quality] [--no-autofix] [--skip-render]',
+      '[--max-script-attempts=4] [--allow-low-quality] [--no-autofix] [--no-relevance-guard] [--skip-render]',
     );
     process.exit(1);
   }
@@ -99,6 +101,7 @@ async function run() {
       maxScriptAttempts,
       allowLowQuality,
       autoFix,
+      relevanceGuardEnabled,
       skipRender,
     },
     events: [],
@@ -167,7 +170,7 @@ async function run() {
     console.log(`  -> Template: ${templateSelection.profile.id} (${templateSelection.reason})`);
 
     console.log(`\n[2/5] Generating script with quality gate...`);
-    const {script, qualityReport, generationMode} = await generateScriptWithQualityGate({
+    const generated = await generateScriptWithQualityGate({
       scraped,
       templateSelection,
       domainPackSelection,
@@ -179,15 +182,62 @@ async function run() {
       autoFix,
       groundingHints,
     });
+    let script = generated.script;
+    let qualityReport = generated.qualityReport;
+    const generationMode = generated.generationMode;
+    let relevanceGuardApplied = false;
+    let relevanceGuardActions: string[] = [];
+    let relevanceGuardWarnings: string[] = [];
+
+    if (relevanceGuardEnabled) {
+      const guarded = applyRenderRelevanceGuard({
+        script,
+        scraped,
+        domainPack: domainPackSelection.pack,
+        groundingHints,
+      });
+      relevanceGuardActions = guarded.actions;
+      relevanceGuardWarnings = guarded.warnings;
+
+      if (guarded.actions.length > 0 || guarded.warnings.length > 0) {
+        console.log(`  -> Relevance guard actions: ${guarded.actions.length}, warnings: ${guarded.warnings.length}`);
+      }
+
+      if (guarded.actions.length > 0) {
+        const guardedReport = scoreScriptQuality({
+          script: guarded.script,
+          scraped,
+          template: templateSelection.profile,
+          domainPack: domainPackSelection.pack,
+          groundingHints,
+          minScore: minQuality,
+          maxWarnings,
+          failOnWarnings: effectiveQualityMode === 'strict',
+        });
+
+        const guardRegressed = qualityReport.passed && !guardedReport.passed && !allowLowQuality;
+        if (guardRegressed) {
+          console.warn('  -> Relevance guard rollback: guarded script failed quality gate.');
+          relevanceGuardWarnings.push('Guard rollback due to quality regression.');
+        } else {
+          script = guarded.script;
+          qualityReport = guardedReport;
+          relevanceGuardApplied = true;
+        }
+      }
+    }
+
     track('script', 'Script generated', {
       score: qualityReport.score,
       passed: qualityReport.passed,
       generationMode,
+      relevanceGuardApplied,
+      relevanceGuardActions: relevanceGuardActions.length,
       warnings: qualityReport.warnings.length,
       blockers: qualityReport.blockers.length,
     });
 
-    console.log(`  -> Script mode: ${generationMode}`);
+    console.log(`  -> Script mode: ${generationMode}${relevanceGuardApplied ? '+relevance-guard' : ''}`);
     console.log(`  -> Quality score: ${qualityReport.score}/${qualityReport.minScore} (passed=${qualityReport.passed})`);
     if (qualityReport.blockers.length > 0) {
       console.log(`  -> Blockers: ${qualityReport.blockers.join(' | ')}`);
@@ -220,6 +270,12 @@ async function run() {
           domainPackTopCandidates: domainPackSelection.topCandidates,
           domainPackScores: domainPackSelection.scores,
           grounding: summarizeGroundingUsage(script, groundingHints),
+          relevanceGuard: {
+            enabled: relevanceGuardEnabled,
+            applied: relevanceGuardApplied,
+            actions: relevanceGuardActions,
+            warnings: relevanceGuardWarnings,
+          },
           generationMode,
           qualityReport,
         },

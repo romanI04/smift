@@ -2,7 +2,6 @@ import fs from 'fs';
 import path from 'path';
 
 const ELEVENLABS_API = 'https://api.elevenlabs.io/v1';
-const REPLICATE_API = 'https://api.replicate.com/v1';
 
 // ElevenLabs voice: "Daniel" - deep British male, professional narration
 const DEFAULT_ELEVENLABS_VOICE = 'onwK4e9ZLuTAKqWW03F9';
@@ -36,10 +35,11 @@ export async function generateVoice(
 }
 
 function detectEngine(): Engine {
+  // Default to ElevenLabs if available, otherwise OpenAI
+  // Chatterbox is free but must be explicitly selected via --voice=chatterbox
   if (process.env.eleven_labs_api_key) return 'elevenlabs';
-  if (process.env.REPLICATE_API_TOKEN) return 'chatterbox';
   if (process.env.openai_api_key) return 'openai';
-  throw new Error('No TTS API key found. Set eleven_labs_api_key, REPLICATE_API_TOKEN, or openai_api_key');
+  return 'chatterbox'; // Free fallback — no API key needed
 }
 
 // --- ElevenLabs v3 ---
@@ -113,76 +113,61 @@ async function generateWithOpenAI(
   return saveAndMeasure(Buffer.from(await response.arrayBuffer()), text, options.outputPath);
 }
 
-// --- Chatterbox (Resemble AI via Replicate) ---
+// --- Chatterbox (Resemble AI via HuggingFace Spaces — FREE) ---
 
-interface ReplicatePrediction {
-  id: string;
-  status: 'starting' | 'processing' | 'succeeded' | 'failed' | 'canceled';
-  output: string | null;
-  error: string | null;
-  urls: {get: string; cancel: string};
-}
+// --- Chatterbox (Resemble AI via HuggingFace Spaces — FREE) ---
+// API: generate_tts_audio
+// Inputs: [text, reference_audio, exaggeration, temperature, seed, cfg_pace, vad_trimming]
+// Output: audio FileData with url
+
+const CHATTERBOX_SPACE = 'https://resembleai-chatterbox.hf.space';
+const CHATTERBOX_API = `${CHATTERBOX_SPACE}/gradio_api/call/generate_tts_audio`;
 
 async function generateWithChatterbox(
   text: string,
   options: VoiceOptions,
 ): Promise<{path: string; durationMs: number}> {
-  const apiToken = process.env.REPLICATE_API_TOKEN;
-  if (!apiToken) throw new Error('Missing REPLICATE_API_TOKEN in environment');
-
-  const voice = options.voiceId || DEFAULT_CHATTERBOX_VOICE;
-
-  // Chatterbox has a 500 char limit — chunk if needed
-  const chunks = chunkText(text, 480);
+  const chunks = chunkText(text, 290); // Space limit is 300 chars
   const audioBuffers: Buffer[] = [];
 
   for (let i = 0; i < chunks.length; i++) {
-    if (chunks.length > 1) console.log(`    -> Chunk ${i + 1}/${chunks.length}: "${chunks[i].slice(0, 40)}..."`);
+    if (chunks.length > 1) console.log(`    -> Chunk ${i + 1}/${chunks.length}: "${chunks[i].slice(0, 50)}..."`);
 
-    // Create prediction with sync wait
-    const response = await fetch(
-      `${REPLICATE_API}/models/resemble-ai/chatterbox-turbo/predictions`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiToken}`,
-          'Content-Type': 'application/json',
-          'Prefer': 'wait',
-        },
-        body: JSON.stringify({
-          input: {
-            text: chunks[i],
-            voice,
-          },
-        }),
-      },
-    );
+    // POST to get event_id
+    const callResponse = await fetch(CHATTERBOX_API, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        data: [
+          chunks[i],   // text
+          null,         // reference audio (null = default voice)
+          0.5,          // exaggeration (0.25-2, 0.5 = neutral)
+          0.8,          // temperature
+          0,            // seed (0 = random)
+          0.5,          // cfg/pace
+          false,        // ref VAD trimming
+        ],
+      }),
+    });
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Replicate API error ${response.status}: ${error}`);
+    if (!callResponse.ok) {
+      const error = await callResponse.text();
+      throw new Error(`Chatterbox API error ${callResponse.status}: ${error}`);
     }
 
-    let prediction: ReplicatePrediction = await response.json();
+    const {event_id} = await callResponse.json();
+    if (!event_id) throw new Error('No event_id returned from Chatterbox');
 
-    // If still processing, poll until done
-    if (prediction.status === 'starting' || prediction.status === 'processing') {
-      prediction = await pollReplicate(prediction.urls.get, apiToken);
-    }
+    // Poll SSE for result
+    const audioUrl = await pollChatterboxResult(event_id);
 
-    if (prediction.status !== 'succeeded' || !prediction.output) {
-      throw new Error(`Chatterbox prediction failed: ${prediction.error || 'no output'}`);
-    }
-
-    // Download the WAV file from Replicate CDN
-    const audioResponse = await fetch(prediction.output);
+    const audioResponse = await fetch(audioUrl);
     if (!audioResponse.ok) {
-      throw new Error(`Failed to download audio: ${audioResponse.status}`);
+      throw new Error(`Failed to download Chatterbox audio: ${audioResponse.status}`);
     }
     audioBuffers.push(Buffer.from(await audioResponse.arrayBuffer()));
   }
 
-  // If multiple chunks, concatenate WAV files via ffmpeg
   let finalBuffer: Buffer;
   if (audioBuffers.length === 1) {
     finalBuffer = audioBuffers[0];
@@ -190,33 +175,52 @@ async function generateWithChatterbox(
     finalBuffer = await concatenateAudioBuffers(audioBuffers, options.outputPath);
   }
 
-  // Chatterbox outputs WAV — convert to MP3 for consistency
+  // Chatterbox outputs WAV — convert to MP3
   const wavPath = options.outputPath.replace('.mp3', '.wav');
   const outputDir = path.dirname(options.outputPath);
   if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, {recursive: true});
   fs.writeFileSync(wavPath, finalBuffer);
 
-  // Convert WAV to MP3
   const {execSync} = await import('child_process');
   execSync(`ffmpeg -i "${wavPath}" -codec:a libmp3lame -b:a 192k "${options.outputPath}" -y 2>/dev/null`);
-  fs.unlinkSync(wavPath); // Clean up WAV
+  fs.unlinkSync(wavPath);
 
   return saveAndMeasure(fs.readFileSync(options.outputPath), text, options.outputPath);
 }
 
-async function pollReplicate(pollUrl: string, apiToken: string): Promise<ReplicatePrediction> {
-  for (let i = 0; i < 60; i++) {
-    await new Promise(r => setTimeout(r, 1000));
-    const res = await fetch(pollUrl, {
-      headers: {'Authorization': `Bearer ${apiToken}`},
-    });
-    const prediction: ReplicatePrediction = await res.json();
-    if (prediction.status === 'succeeded') return prediction;
-    if (prediction.status === 'failed' || prediction.status === 'canceled') {
-      throw new Error(`Chatterbox failed: ${prediction.error}`);
+async function pollChatterboxResult(eventId: string): Promise<string> {
+  const sseUrl = `${CHATTERBOX_API}/${eventId}`;
+
+  for (let attempt = 0; attempt < 90; attempt++) {
+    await new Promise(r => setTimeout(r, 2000));
+
+    try {
+      const res = await fetch(sseUrl);
+      const body = await res.text();
+
+      const lines = body.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i] === 'event: complete' && i + 1 < lines.length) {
+          const dataLine = lines[i + 1];
+          if (dataLine.startsWith('data: ')) {
+            const data = JSON.parse(dataLine.slice(6));
+            if (Array.isArray(data) && data[0]) {
+              const audioInfo = data[0];
+              if (typeof audioInfo === 'string') return audioInfo;
+              if (audioInfo.url) return audioInfo.url;
+              if (audioInfo.path) return `${CHATTERBOX_SPACE}/gradio_api/file=${audioInfo.path}`;
+            }
+          }
+        }
+        if (lines[i] === 'event: error' && i + 1 < lines.length) {
+          throw new Error(`Chatterbox generation error: ${lines[i + 1]}`);
+        }
+      }
+    } catch (e: any) {
+      if (e.message.startsWith('Chatterbox')) throw e;
     }
   }
-  throw new Error('Chatterbox timed out after 60s');
+  throw new Error('Chatterbox timed out after 3 minutes');
 }
 
 function chunkText(text: string, maxChars: number): string[] {

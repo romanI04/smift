@@ -79,11 +79,18 @@ const server = http.createServer(async (req, res) => {
       if (!job) return sendJson(res, 404, {error: 'job not found'});
 
       if (parts.length === 3) {
+        if (url.searchParams.get('view') === 'quality') {
+          return sendJson(res, 200, qualitySummaryFor(job));
+        }
         return sendJson(res, 200, enrichJob(job));
       }
 
       if (parts.length === 4 && parts[3] === 'artifacts') {
         return sendJson(res, 200, artifactsFor(job));
+      }
+
+      if (parts.length === 4 && parts[3] === 'quality') {
+        return sendJson(res, 200, qualitySummaryFor(job));
       }
     }
 
@@ -208,7 +215,53 @@ function enrichJob(job: JobRecord) {
     ...job,
     queuePosition: job.status === 'queued' ? queue.indexOf(job.id) + 1 : 0,
     artifacts: artifactsFor(job),
+    quality: qualitySummaryFor(job),
   };
+}
+
+function qualitySummaryFor(job: JobRecord) {
+  const base = path.join(outDir, job.outputName);
+  const qualityPath = `${base}-quality.json`;
+  if (!fs.existsSync(qualityPath)) {
+    return {
+      available: false,
+      path: null,
+      score: null,
+      passed: null,
+      generationMode: null,
+      domainPack: null,
+      domainPackConfidence: null,
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(qualityPath, 'utf-8')) as {
+      generationMode?: string;
+      domainPack?: string;
+      domainPackConfidence?: number;
+      qualityReport?: {score?: number; passed?: boolean};
+    };
+    return {
+      available: true,
+      path: qualityPath,
+      score: parsed.qualityReport?.score ?? null,
+      passed: parsed.qualityReport?.passed ?? null,
+      generationMode: parsed.generationMode ?? null,
+      domainPack: parsed.domainPack ?? null,
+      domainPackConfidence: parsed.domainPackConfidence ?? null,
+    };
+  } catch {
+    return {
+      available: false,
+      path: qualityPath,
+      score: null,
+      passed: null,
+      generationMode: null,
+      domainPack: null,
+      domainPackConfidence: null,
+      error: 'quality file parse failed',
+    };
+  }
 }
 
 function persistJob(job: JobRecord) {

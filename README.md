@@ -21,6 +21,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `npm run eval -- --limit=10`: benchmark batch summary (JSON + CSV)
 - `npm run eval:packs`: offline domain-pack regression suite
 - `npm run serve`: local self-serve queue + web UI (`http://localhost:3030`)
+  - quality-only status view: `GET /api/jobs/:id/quality` (or `GET /api/jobs/:id?view=quality`)
 
 ## Useful Flags (`generate`)
 

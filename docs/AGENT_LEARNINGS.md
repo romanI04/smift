@@ -24,6 +24,7 @@
 - Jobs are persisted to `out/jobs/<id>.json` for operational traceability.
 - API returns local artifact paths; downstream systems can upload them if needed.
 - Server now supports pack control (`payload.pack` / UI dropdown), forwarded to `generate --pack=...`.
+- Use `GET /api/jobs/:id/quality` (or `?view=quality`) for cheap status polling when full artifacts are unnecessary.
 
 ## Domain Pack System
 

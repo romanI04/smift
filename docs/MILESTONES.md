@@ -64,3 +64,12 @@
   - `domainPackScores`
 - Added offline regression fixtures (`src/pipeline/pack-fixtures.ts`) covering every major pack family plus ambiguity/fallback cases.
 - Added pack regression runner (`src/pipeline/eval-packs.ts`) and `npm run eval:packs`.
+
+### M7 - Server Quality-Only Triage API
+
+- Added quality-only endpoint to local runner:
+  - `GET /api/jobs/:id/quality`
+  - `GET /api/jobs/:id?view=quality`
+- Job payload now includes parsed quality summary:
+  - `score`, `passed`, `generationMode`, `domainPack`, `domainPackConfidence`.
+- This enables lightweight queue polling and triage without consuming full script artifacts.

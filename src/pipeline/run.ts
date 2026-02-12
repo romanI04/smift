@@ -38,20 +38,29 @@ async function run() {
   console.log(`  -> Brand: ${script.brandName}`);
   console.log(`  -> Hook: "${script.hookLine1} ${script.hookLine2} ${script.hookKeyword}"`);
   console.log(`  -> Features: ${script.features.map(f => f.appName).join(', ')}`);
-  console.log(`  -> Narration: "${script.narration}"`);
+  console.log(`  -> Narration segments:`);
+  const sceneNames = ['Brand Reveal', 'Hook Text', 'Wordmark', 'Feature 1', 'Feature 2', 'Feature 3', 'Integrations', 'Closing'];
+  script.narrationSegments.forEach((seg, i) => {
+    console.log(`     ${sceneNames[i]}: "${seg}"`);
+  });
+  console.log(`  -> Scene weights: [${script.sceneWeights?.join(', ')}]`);
+
+  // Join segments into full narration for TTS
+  const fullNarration = script.narrationSegments.join(' ');
+  console.log(`  -> Full narration (${fullNarration.split(/\s+/).length} words): "${fullNarration}"`);
 
   // Save script for debugging
   const scriptPath = path.join(outputDir, `${outputName}-script.json`);
-  fs.writeFileSync(scriptPath, JSON.stringify(script, null, 2));
+  fs.writeFileSync(scriptPath, JSON.stringify({...script, narration: fullNarration}, null, 2));
   console.log(`  -> Script saved to ${scriptPath}`);
 
-  console.log(`\n[3/4] Generating voice via ElevenLabs...`);
+  console.log(`\n[3/4] Generating voice...`);
   const audioFilename = `${outputName}-voice.mp3`;
   const audioPath = path.join(outputDir, audioFilename);
   let voiceResult: {path: string; durationMs: number} | null = null;
 
   try {
-    voiceResult = await generateVoice(script.narration, {outputPath: audioPath, engine: voiceEngine});
+    voiceResult = await generateVoice(fullNarration, {outputPath: audioPath, engine: voiceEngine});
     console.log(`  -> Audio: ${voiceResult.path} (${voiceResult.durationMs}ms)`);
 
     // Copy voice to public/ so Remotion's staticFile() can find it
@@ -76,8 +85,8 @@ async function run() {
     }),
   };
 
-  // Remove narration from props (not a VideoProps field)
-  delete inputProps.narration;
+  // Remove pipeline-only fields from props
+  delete inputProps.narrationSegments;
 
   const composition = await selectComposition({
     serveUrl: bundled,

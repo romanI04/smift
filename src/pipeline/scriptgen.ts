@@ -15,7 +15,16 @@ Output ONLY valid JSON matching this exact schema:
   "hookLine1": "string - 2-3 words, sets up the hook (e.g. 'your inbox')",
   "hookLine2": "string - 2-3 words, the problem (e.g. 'is drowning')",
   "hookKeyword": "string - 2-3 words, the twist/solution hint (e.g. 'in noise')",
-  "narration": "string - full voiceover script, 30-40 words, conversational tone",
+  "narrationSegments": [
+    "string - 1: spoken during brand reveal (3-5 words, e.g. 'Tired of messy projects?')",
+    "string - 2: spoken during hook text (5-8 words)",
+    "string - 3: spoken during wordmark (3-5 words, e.g. 'Meet Linear.')",
+    "string - 4: spoken during feature 1 demo (8-12 words)",
+    "string - 5: spoken during feature 2 demo (8-12 words)",
+    "string - 6: spoken during feature 3 demo (8-12 words)",
+    "string - 7: spoken during integrations (6-10 words)",
+    "string - 8: spoken during closing/CTA (5-8 words, must include the URL)"
+  ],
   "features": [
     {
       "icon": "mail|ai|social|code|calendar|analytics|chat|generic",
@@ -35,11 +44,24 @@ Rules:
 - demoLines should be realistic content a user would see
 - For email features: first demoLine is subject, rest is body with proper paragraph breaks (use empty strings for breaks)
 - For AI/chat features: one continuous paragraph
-- narration should flow naturally when read aloud, covering hook → brand → features → CTA
+- narrationSegments must have exactly 8 items, one per scene
+- The segments must flow naturally as one continuous voiceover when read in order
+- Each segment maps to a specific visual scene — the words should match what's on screen
+- Segment 1 (brand reveal): opening question or statement
+- Segment 2 (hook text): expand the problem, matches hookLine1/hookLine2/hookKeyword
+- Segment 3 (wordmark): introduce the brand name ("Meet X." or "Introducing X.")
+- Segment 4-6 (features): describe what each feature does, matching the feature order
+- Segment 7 (integrations): mention how it connects/works with other tools
+- Segment 8 (closing): call to action with the URL
+- Keep total narration to 50-65 words
 - Pick icon types that match the feature context
 - integrations should be real app names the product connects with`;
 
-export async function generateScript(scraped: ScrapedData): Promise<VideoProps & {narration: string}> {
+export interface ScriptResult extends VideoProps {
+  narrationSegments: string[];
+}
+
+export async function generateScript(scraped: ScrapedData): Promise<ScriptResult> {
   const apiKey = process.env.openai_api_key;
   if (!apiKey) throw new Error('Missing openai_api_key in environment');
 
@@ -81,13 +103,22 @@ Colors found: ${scraped.colors.join(', ')}`;
   const parsed = JSON.parse(content);
 
   // Validate required fields
-  const required = ['brandName', 'brandUrl', 'tagline', 'hookLine1', 'hookLine2', 'hookKeyword', 'features', 'integrations', 'ctaUrl'];
+  const required = ['brandName', 'brandUrl', 'tagline', 'hookLine1', 'hookLine2', 'hookKeyword', 'features', 'integrations', 'ctaUrl', 'narrationSegments'];
   for (const field of required) {
     if (!parsed[field]) throw new Error(`Missing required field: ${field}`);
   }
   if (parsed.features.length !== 3) {
     throw new Error(`Expected 3 features, got ${parsed.features.length}`);
   }
+  if (!Array.isArray(parsed.narrationSegments) || parsed.narrationSegments.length !== 8) {
+    throw new Error(`Expected 8 narration segments, got ${parsed.narrationSegments?.length}`);
+  }
+
+  // Compute scene weights from word counts
+  const sceneWeights = parsed.narrationSegments.map((seg: string) => {
+    const words = seg.trim().split(/\s+/).length;
+    return Math.max(words, 2); // minimum 2 words weight
+  });
 
   return {
     brandName: parsed.brandName,
@@ -101,6 +132,7 @@ Colors found: ${scraped.colors.join(', ')}`;
     features: parsed.features,
     integrations: parsed.integrations.slice(0, 12),
     ctaUrl: parsed.ctaUrl,
-    narration: parsed.narration || '',
+    narrationSegments: parsed.narrationSegments,
+    sceneWeights,
   };
 }

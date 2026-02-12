@@ -47,4 +47,5 @@ export const voiceosData: VideoProps = {
     'Figma', 'Linear',
   ],
   ctaUrl: 'voiceos.com',
+  sceneWeights: [4, 6, 3, 8, 8, 7, 7, 6],
 };

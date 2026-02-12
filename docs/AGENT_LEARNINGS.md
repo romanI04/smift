@@ -54,6 +54,7 @@
 - Track both metrics: quality pass-rate can stay high while pack accuracy drops; both need to be monitored.
 - B2B recall depends heavily on customer-service/sales vocabulary; signal terms now help recover sparse or marketing-heavy pages.
 - After changing one pack’s signal terms, run `eval:real` on at least 20 URLs to check cross-pack regressions.
+- If tie-break logic can choose a non-top raw candidate, compute score separation with an absolute gap before ambiguity fallback checks.
 
 ## Known Gaps / Next Work
 
@@ -65,4 +66,3 @@
 - Add domain-aware terms to scraper extraction (e.g. schema.org / JSON-LD hints) to improve pack confidence on sparse landing pages.
 - Add CI gating for `npm run eval:packs` and fail PRs on pack-routing regressions.
 - Reduce repetitive feature-name roots on sparse single-theme sites (e.g. TFT pages repeating "Teamfight Tactics" variants).
-- Resolve remaining `klaviyo.com` ambiguity (`b2b-saas` vs `ecommerce-retail`) with clearer pack tie-break logic.

@@ -132,3 +132,14 @@
   - added negative B2B indicators to `media-creator`
   - replaced generic real-estate keyword `agent` with `real estate agent`.
 - `eval:real --limit=20` improved from ~`78.9%` to `94.7%` pack accuracy (excluding one network-blocked domain).
+
+### M12 - B2B vs Ecommerce Tie-Break Stability
+
+- Added explicit b2b/ecommerce disambiguation notes in auto-pack selection reasons for easier debugging.
+- Fixed tie-break stability bug by using absolute candidate gap during fallback gating:
+  - prevents false fallback to `general` when disambiguation intentionally selects a close second candidate.
+- Validated with targeted repro:
+  - `klaviyo.com` now consistently selects `ecommerce-retail` (instead of dropping to `general`).
+- Re-ran benchmarks:
+  - `npm run eval:packs`: `100%` (14/14)
+  - `npm run eval:real -- --limit=20 --max-script-attempts=1 --allow-low-quality`: `100%` pack accuracy on comparable domains (`19/19`; one blocked fetch on `tracker.gg`), `95%` pass rate (`19/20`).

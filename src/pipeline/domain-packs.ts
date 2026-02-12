@@ -315,7 +315,7 @@ export function selectDomainPack(scraped: ScrapedData, requested?: 'auto' | Doma
     };
   }
 
-  const corpora = {
+  const corpora: ScoringCorpora = {
     domain: scraped.domain.toLowerCase(),
     title: [scraped.title, scraped.ogTitle].join(' ').toLowerCase(),
     description: [scraped.description, scraped.ogDescription].join(' ').toLowerCase(),
@@ -358,10 +358,11 @@ export function selectDomainPack(scraped: ScrapedData, requested?: 'auto' | Doma
   }
 
   candidates.sort((a, b) => b.score - a.score);
-  const best = candidates[0];
-  const runnerUp = candidates[1];
+  const disambiguation = disambiguatePackSelection(candidates, scores, corpora);
+  const best = candidates.find((candidate) => candidate.id === disambiguation.id) ?? candidates[0];
+  const runnerUp = candidates.find((candidate) => candidate.id !== best?.id);
   const bestScore = best?.score ?? 0;
-  const gap = best && runnerUp ? best.score - runnerUp.score : bestScore;
+  const gap = best && runnerUp ? Math.abs(best.score - runnerUp.score) : bestScore;
   const confidence = inferConfidence(bestScore, gap);
 
   const MIN_BEST_SCORE = 5;
@@ -387,7 +388,7 @@ export function selectDomainPack(scraped: ScrapedData, requested?: 'auto' | Doma
   ) {
     return {
       pack: DOMAIN_PACKS.general,
-      reason: `Auto-selected general fallback (best=${best?.id ?? 'none'} score=${bestScore.toFixed(2)}, gap=${gap.toFixed(2)}, confidence=${confidence.toFixed(2)}).`,
+      reason: `Auto-selected general fallback (best=${best?.id ?? 'none'} score=${bestScore.toFixed(2)}, gap=${gap.toFixed(2)}, confidence=${confidence.toFixed(2)}${disambiguation.note ? `, ${disambiguation.note}` : ''}).`,
       scores,
       confidence,
       topCandidates: candidates.slice(0, 3),
@@ -396,7 +397,7 @@ export function selectDomainPack(scraped: ScrapedData, requested?: 'auto' | Doma
 
   return {
     pack: DOMAIN_PACKS[best.id],
-    reason: `Auto-selected ${best.id} (score=${bestScore.toFixed(2)}, gap=${gap.toFixed(2)}, confidence=${confidence.toFixed(2)}).`,
+    reason: `Auto-selected ${best.id} (score=${bestScore.toFixed(2)}, gap=${gap.toFixed(2)}, confidence=${confidence.toFixed(2)}${disambiguation.note ? `, ${disambiguation.note}` : ''}).`,
     scores,
     confidence,
     topCandidates: candidates.slice(0, 3),
@@ -420,19 +421,18 @@ function makeZeroScores(): Record<DomainPackId, number> {
   };
 }
 
-function weightedKeywordScore(
-  corpora: {
-    domain: string;
-    title: string;
-    description: string;
-    headings: string;
-    features: string;
-    body: string;
-    structured: string;
-    links: string;
-  },
-  keyword: string,
-): number {
+interface ScoringCorpora {
+  domain: string;
+  title: string;
+  description: string;
+  headings: string;
+  features: string;
+  body: string;
+  structured: string;
+  links: string;
+}
+
+function weightedKeywordScore(corpora: ScoringCorpora, keyword: string): number {
   const phrase = toPhraseRegex(keyword);
   const multiplier = keywordWeight(keyword);
   let score = 0;
@@ -445,6 +445,64 @@ function weightedKeywordScore(
   if (phrase.test(corpora.links)) score += 1.5 * multiplier;
   if (phrase.test(corpora.body)) score += 1 * multiplier;
   return score;
+}
+
+function disambiguatePackSelection(
+  candidates: Array<{id: DomainPackId; score: number}>,
+  scores: Record<DomainPackId, number>,
+  corpora: ScoringCorpora,
+): {id: DomainPackId; note?: string} {
+  const b2bScore = scores['b2b-saas'] ?? 0;
+  const ecommerceScore = scores['ecommerce-retail'] ?? 0;
+  const closeB2bVsEcom = Math.abs(b2bScore - ecommerceScore) <= 3.5;
+  const topPairContainsB2bAndEcom = candidates.slice(0, 2).every((candidate) =>
+    candidate.id === 'b2b-saas' || candidate.id === 'ecommerce-retail');
+
+  if (closeB2bVsEcom && topPairContainsB2bAndEcom) {
+    const ecommerceIntent = sumSignalScore(corpora, [
+      'b2c',
+      'ecommerce',
+      'storefront',
+      'shopify',
+      'cart',
+      'checkout',
+      'sms marketing',
+      'email marketing',
+      'omnichannel',
+      'product feed',
+      'bfcm',
+      'merchant',
+    ]);
+    const b2bIntent = sumSignalScore(corpora, [
+      'enterprise',
+      'sales team',
+      'sales pipeline',
+      'revenue operations',
+      'deal desk',
+      'account executive',
+      'customer support',
+      'service desk',
+      'ticketing',
+      'lead routing',
+    ]);
+
+    if (ecommerceIntent >= b2bIntent + 1.5) {
+      return {id: 'ecommerce-retail', note: `b2b-ecom tie-break -> ecommerce intent ${ecommerceIntent.toFixed(2)} vs ${b2bIntent.toFixed(2)}`};
+    }
+    if (b2bIntent >= ecommerceIntent + 1.5) {
+      return {id: 'b2b-saas', note: `b2b-ecom tie-break -> b2b intent ${b2bIntent.toFixed(2)} vs ${ecommerceIntent.toFixed(2)}`};
+    }
+  }
+
+  return {id: candidates[0]?.id ?? 'general'};
+}
+
+function sumSignalScore(corpora: ScoringCorpora, terms: string[]): number {
+  let total = 0;
+  for (const term of terms) {
+    total += weightedKeywordScore(corpora, term);
+  }
+  return Number(total.toFixed(2));
 }
 
 function inferConfidence(bestScore: number, gap: number): number {

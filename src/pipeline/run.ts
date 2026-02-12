@@ -130,9 +130,11 @@ async function run() {
       title: scraped.title,
       headings: scraped.headings.length,
       features: scraped.features.length,
+      structuredHints: scraped.structuredHints.length,
     });
     console.log(`  -> ${scraped.title}`);
     console.log(`  -> ${scraped.headings.length} headings, ${scraped.features.length} features found`);
+    console.log(`  -> ${scraped.structuredHints.length} structured hints found`);
 
     const domainPackSelection = selectDomainPack(scraped, packArg);
     track('pack', 'Domain pack selected', {

@@ -244,6 +244,7 @@ export function selectDomainPack(scraped: ScrapedData, requested?: 'auto' | Doma
     headings: scraped.headings.join(' ').toLowerCase(),
     features: scraped.features.join(' ').toLowerCase(),
     body: scraped.bodyText.toLowerCase(),
+    structured: (scraped.structuredHints ?? []).join(' ').toLowerCase(),
     links: scraped.links.join(' ').toLowerCase(),
   };
 
@@ -282,8 +283,19 @@ export function selectDomainPack(scraped: ScrapedData, requested?: 'auto' | Doma
   const MIN_GAP = 1.5;
   const MIN_CONFIDENCE = 0.4;
   const AMBIGUOUS_HIGH_CONFIDENCE = 0.62;
+  const LOW_SIGNAL_MIN_SCORE = 3;
+  const LOW_SIGNAL_MIN_GAP = 2;
+  const LOW_SIGNAL_MIN_CONFIDENCE = 0.52;
 
-  if (!best || bestScore < MIN_BEST_SCORE || confidence < MIN_CONFIDENCE || (gap < MIN_GAP && confidence < AMBIGUOUS_HIGH_CONFIDENCE)) {
+  const lowSignalButClear = bestScore >= LOW_SIGNAL_MIN_SCORE
+    && gap >= LOW_SIGNAL_MIN_GAP
+    && confidence >= LOW_SIGNAL_MIN_CONFIDENCE;
+
+  if (
+    !best
+    || ((bestScore < MIN_BEST_SCORE || confidence < MIN_CONFIDENCE) && !lowSignalButClear)
+    || (gap < MIN_GAP && confidence < AMBIGUOUS_HIGH_CONFIDENCE)
+  ) {
     return {
       pack: DOMAIN_PACKS.general,
       reason: `Auto-selected general fallback (best=${best?.id ?? 'none'} score=${bestScore.toFixed(2)}, gap=${gap.toFixed(2)}, confidence=${confidence.toFixed(2)}).`,
@@ -327,6 +339,7 @@ function weightedKeywordScore(
     headings: string;
     features: string;
     body: string;
+    structured: string;
     links: string;
   },
   keyword: string,
@@ -339,6 +352,7 @@ function weightedKeywordScore(
   if (phrase.test(corpora.description)) score += 2 * multiplier;
   if (phrase.test(corpora.headings)) score += 2 * multiplier;
   if (phrase.test(corpora.features)) score += 2 * multiplier;
+  if (phrase.test(corpora.structured)) score += 3 * multiplier;
   if (phrase.test(corpora.links)) score += 1.5 * multiplier;
   if (phrase.test(corpora.body)) score += 1 * multiplier;
   return score;

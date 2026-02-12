@@ -34,6 +34,8 @@
 - Check `out/<name>-quality.json` for `domainPack` and `domainPackReason` during debugging; it is the quickest signal for misclassification.
 - Use `domainPackConfidence` and `domainPackTopCandidates` in `out/<name>-quality.json` before changing prompts; many misses are classification uncertainty, not generation defects.
 - `npm run eval:packs` is the first-line regression check for pack routing changes (offline, deterministic, fast).
+- Sparse pages are common; classifier now allows low-signal-but-clear routing (score/gap/confidence) to avoid over-falling back to `general`.
+- Scraper exposes `structuredHints` from JSON-LD metadata. Keep this field in fixtures when adding new pack tests.
 
 ## Known Gaps / Next Work
 

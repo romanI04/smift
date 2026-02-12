@@ -10,6 +10,7 @@ export interface ScrapedData {
   headings: string[];
   features: string[];
   bodyText: string;
+  structuredHints: string[];
   colors: string[];
   links: string[];
   domain: string;
@@ -100,6 +101,7 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
 
   // Body text (first 3000 chars of visible text)
   const bodyText = normalizeWhitespace($('body').text()).slice(0, 3200);
+  const structuredHints = extractStructuredHints($);
 
   // Colors from inline styles and CSS custom properties
   const colors: string[] = [];
@@ -131,6 +133,7 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
     headings: headings.slice(0, 20),
     features: features.slice(0, 30),
     bodyText,
+    structuredHints,
     colors,
     links: links.slice(0, 20),
     domain,
@@ -210,4 +213,72 @@ function looksLikeFeature(text: string): boolean {
     'learning',
   ];
   return valueWords.some((w) => lower.includes(w)) || /\b(with|for|without|across)\b/.test(lower);
+}
+
+function extractStructuredHints($: cheerio.CheerioAPI): string[] {
+  const out: string[] = [];
+  const keys = new Set(['@type', 'applicationcategory', 'category', 'keywords', 'genre', 'industry', 'servicetype', 'about']);
+
+  $('script[type="application/ld+json"]').each((_, el) => {
+    const raw = $(el).text().trim();
+    if (!raw) return;
+    const parsed = safeParseJson(raw);
+    if (!parsed) return;
+    collectStructuredTerms(parsed, keys, out);
+  });
+
+  return [...new Set(out.map(normalizeWhitespace).filter((x) => x.length >= 3 && x.length <= 80))].slice(0, 30);
+}
+
+function safeParseJson(raw: string): unknown | null {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    const cleaned = raw.replace(/,\s*([}\]])/g, '$1');
+    try {
+      return JSON.parse(cleaned);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function collectStructuredTerms(node: unknown, keys: Set<string>, out: string[]) {
+  if (node == null) return;
+  if (Array.isArray(node)) {
+    for (const item of node) collectStructuredTerms(item, keys, out);
+    return;
+  }
+  if (typeof node !== 'object') return;
+
+  const obj = node as Record<string, unknown>;
+  for (const [key, value] of Object.entries(obj)) {
+    const normalizedKey = key.toLowerCase();
+    if (keys.has(normalizedKey)) {
+      pushStructuredValue(value, out);
+    }
+    if (typeof value === 'object' && value !== null) {
+      collectStructuredTerms(value, keys, out);
+    }
+  }
+}
+
+function pushStructuredValue(value: unknown, out: string[]) {
+  if (typeof value === 'string') {
+    out.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (typeof item === 'string') out.push(item);
+      else if (item && typeof item === 'object' && typeof (item as Record<string, unknown>).name === 'string') {
+        out.push(String((item as Record<string, unknown>).name));
+      }
+    }
+    return;
+  }
+  if (value && typeof value === 'object') {
+    const name = (value as Record<string, unknown>).name;
+    if (typeof name === 'string') out.push(name);
+  }
 }

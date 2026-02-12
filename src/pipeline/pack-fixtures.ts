@@ -239,6 +239,7 @@ function makeScraped(args: {
     headings: args.headings,
     features: args.features,
     bodyText: args.bodyText,
+    structuredHints: [],
     colors: [],
     links: args.links,
     domain: args.domain,

@@ -56,6 +56,8 @@
   - weak generic keywords are down-weighted to reduce false positives.
 - Added confidence and gap gating for fallback:
   - ambiguous or weak matches now route to `general` instead of forcing wrong domain packs.
+  - low-signal-but-clear domains can still route to specific packs when confidence+gap are strong.
+- Added structured taxonomy extraction from JSON-LD in scraper (`structuredHints`) and fed it into pack scoring.
 - Added pack diagnostics to artifacts:
   - `domainPackConfidence`
   - `domainPackTopCandidates`

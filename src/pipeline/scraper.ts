@@ -79,7 +79,7 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
 
   const structuredHints = extractStructuredHints($);
   const rawBodyText = normalizeWhitespace($('body').text()).slice(0, 3200);
-  const blockSignals = detectBlockedSignals({
+  const blockSignals = detectBlockedPageSignals({
     title,
     description,
     ogTitle,
@@ -252,7 +252,7 @@ function looksLikeFeature(text: string): boolean {
   return valueWords.some((w) => lower.includes(w)) || /\b(with|for|without|across)\b/.test(lower);
 }
 
-function detectBlockedSignals(args: {
+export function detectBlockedPageSignals(args: {
   title: string;
   description: string;
   ogTitle: string;
@@ -286,7 +286,7 @@ function detectBlockedSignals(args: {
   return {blockedLikely: reasons.length > 0, reasons};
 }
 
-function sanitizeBlockedMetadata(args: {
+export function sanitizeBlockedMetadata(args: {
   title: string;
   description: string;
   ogTitle: string;
@@ -299,6 +299,8 @@ function sanitizeBlockedMetadata(args: {
     'captcha',
     'cloudflare',
     'javascript',
+    'browser',
+    'checking your browser',
     'update browser',
     'please update',
     'old browser',
@@ -327,7 +329,7 @@ function sanitizeBlockedMetadata(args: {
   };
 }
 
-function extractMetadataFallback(args: {
+export function extractMetadataFallback(args: {
   title: string;
   description: string;
   ogTitle: string;
@@ -341,6 +343,8 @@ function extractMetadataFallback(args: {
     'captcha',
     'cloudflare',
     'javascript',
+    'browser',
+    'checking your browser',
     'update browser',
     'please update',
     'old browser',

@@ -19,6 +19,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `npm run generate -- <url> --skip-render`: script + quality only
 - `npm run generate -- <url> --strict`: strict quality mode
 - `npm run eval -- --limit=10`: benchmark batch summary (JSON + CSV)
+- `npm run eval:scraper`: blocked-page scraper fixture regression suite
 - `npm run eval:packs`: offline domain-pack regression suite
 - `npm run eval:real -- --limit=20`: real-URL benchmark with expected-pack accuracy
 - `npm run eval:real:smoke`: CI-friendly real-URL smoke suite with threshold gating

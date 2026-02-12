@@ -108,6 +108,15 @@ Scope:
 9. Run 20-URL manual QA and log failures.
 10. Patch top 3 failure classes and rerun benchmarks.
 
+### Execution Status
+
+- Completed:
+  - Step 1: blocked-page classifier in scraper.
+  - Step 2: metadata-first fallback extraction for blocked pages.
+  - Step 3: blocked-page fixtures + scraper eval runner.
+- Next up:
+  - Step 4: improve first-5-second hook quality.
+
 ## 5) Non-Negotiable Prioritization Rules
 
 1. Engine quality before hosting polish.

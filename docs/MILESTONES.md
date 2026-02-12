@@ -238,3 +238,21 @@
   - `eval:customer`: pack `87.1%` (`27/31`), quality pass `100%` (`31/31`)
   - `eval:customer:core`: pack `95.2%` (`20/21`), quality pass `100%` (`21/21`)
 - Added corpus documentation: `docs/CUSTOMER_CORPUS.md`.
+
+### M19 - Blocked-Page Fixture Harness (Roadmap Day 3)
+
+- Added scraper fixture set (`src/pipeline/scraper-fixtures.ts`) covering:
+  - unsupported browser pages
+  - cloudflare/challenge pages
+  - access denied pages
+  - normal non-blocked pages.
+- Added scraper regression runner (`src/pipeline/eval-scraper.ts`) and command:
+  - `npm run eval:scraper`
+- Exported scraper helper primitives for deterministic fixture checks:
+  - `detectBlockedPageSignals`
+  - `sanitizeBlockedMetadata`
+  - `extractMetadataFallback`
+- Tightened blocked-term sanitization in fallback extraction (removes challenge/browser copy leakage).
+- Validation:
+  - `npm run eval:scraper`: `100%` (`5/5`)
+  - `npm run eval:real:smoke`: `100%` pack accuracy (`10/10`), `100%` pass rate (`10/10`).

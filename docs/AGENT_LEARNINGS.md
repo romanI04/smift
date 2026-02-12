@@ -13,6 +13,7 @@
 - TTS providers are volatile; keep `voice=none` for benchmark correctness and speed.
 - Scraper now supports `scrapeMode=metadata-fallback` for blocked pages; check this first when outputs look generic.
 - If a domain is blocked/challenged, sanitize metadata and avoid feeding challenge-copy into grounding.
+- Run `npm run eval:scraper` after scraper changes to catch blocked-page fallback regressions before real-url evals.
 
 ## Eval Harness
 

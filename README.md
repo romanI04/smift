@@ -22,6 +22,8 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `npm run eval:packs`: offline domain-pack regression suite
 - `npm run eval:real -- --limit=20`: real-URL benchmark with expected-pack accuracy
 - `npm run eval:real:smoke`: CI-friendly real-URL smoke suite with threshold gating
+- `npm run eval:customer`: customer-style corpus benchmark
+- `npm run eval:customer:core`: core paying-segment benchmark (primary GTM gate)
 - `npm run serve`: local self-serve queue + web UI (`http://localhost:3030`)
   - quality-only status view: `GET /api/jobs/:id/quality` (or `GET /api/jobs/:id?view=quality`)
 
@@ -44,6 +46,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
 ## Useful Flags (`eval:real`)
 
 - `--suite=full|smoke`
+- `--segment=<segment-id>` (used by customer suite, e.g. `core-icp`)
 - `--limit=<n>`
 - `--min-pass-rate=<percent>`
 - `--min-pack-accuracy=<percent>`
@@ -91,3 +94,4 @@ Generated artifacts land in `out/`:
 - `docs/MILESTONES.md`: sprint milestone log
 - `docs/AGENT_LEARNINGS.md`: implementation notes and known traps for future agents
 - `docs/ROADMAP.md`: paid-product roadmap, acceptance gates, and execution order
+- `docs/CUSTOMER_CORPUS.md`: customer URL corpus and benchmark baselines

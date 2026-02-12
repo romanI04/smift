@@ -11,6 +11,8 @@
     "eval:packs": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/eval-packs.ts",
     "eval:real": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/eval-real.ts",
     "eval:real:smoke": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/eval-real.ts --suite=smoke --max-script-attempts=1 --allow-low-quality --min-pass-rate=80 --min-pack-accuracy=80 --min-pack-comparable=8 --max-errors=2",
+    "eval:customer": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/eval-real.ts --suite=customer --max-script-attempts=1 --allow-low-quality --min-pass-rate=85 --min-pack-accuracy=85 --min-pack-comparable=20 --max-errors=4",
+    "eval:customer:core": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/eval-real.ts --suite=customer --segment=core-icp --max-script-attempts=1 --allow-low-quality --min-pass-rate=90 --min-pack-accuracy=90 --min-pack-comparable=16 --max-errors=2",
     "serve": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/server/serve.ts"
   },
   "dependencies": {

@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import {REAL_BENCHMARK_CASES} from './benchmark-real-urls';
 import {REAL_SMOKE_BENCHMARK_CASES} from './benchmark-real-smoke-urls';
+import {CUSTOMER_BENCHMARK_CASES} from './benchmark-customer-urls';
 
 interface RealEvalResult {
   url: string;
@@ -28,14 +29,28 @@ interface QualityReportFile {
   };
 }
 
+interface BenchmarkCaseLike {
+  url: string;
+  expectedPack: string;
+  segment?: string;
+}
+
 async function run() {
   const args = process.argv.slice(2);
   const outDir = path.resolve(__dirname, '../../out');
   const suite = parseStringArg(args, '--suite') ?? 'full';
+  const segment = parseStringArg(args, '--segment');
   const minQuality = parseNumberArg(args, '--min-quality', 80);
   const maxWarnings = parseNumberArg(args, '--max-warnings', 1);
-  const benchmarkCases = suite === 'smoke' ? REAL_SMOKE_BENCHMARK_CASES : REAL_BENCHMARK_CASES;
-  const limit = parseNumberArg(args, '--limit', benchmarkCases.length);
+  const benchmarkCases: BenchmarkCaseLike[] = suite === 'smoke'
+    ? REAL_SMOKE_BENCHMARK_CASES
+    : suite === 'customer'
+      ? CUSTOMER_BENCHMARK_CASES
+      : REAL_BENCHMARK_CASES;
+  const filteredCases = segment
+    ? benchmarkCases.filter((item) => item.segment === segment)
+    : benchmarkCases;
+  const limit = parseNumberArg(args, '--limit', filteredCases.length);
   const minPassRate = parseOptionalNumberArg(args, '--min-pass-rate');
   const minPackAccuracy = parseOptionalNumberArg(args, '--min-pack-accuracy');
   const minPackComparable = parseOptionalNumberArg(args, '--min-pack-comparable');
@@ -47,11 +62,11 @@ async function run() {
   const allowLowQuality = args.includes('--allow-low-quality');
   const noAutofix = args.includes('--no-autofix');
 
-  const cases = benchmarkCases.slice(0, Math.max(1, limit));
+  const cases = filteredCases.slice(0, Math.max(1, limit));
   const startedAt = Date.now();
   const results: RealEvalResult[] = [];
 
-  console.log(`Running ${suite} real benchmark on ${cases.length} URL(s)...`);
+  console.log(`Running ${suite}${segment ? `/${segment}` : ''} real benchmark on ${cases.length} URL(s)...`);
 
   for (let i = 0; i < cases.length; i++) {
     const testCase = cases[i];
@@ -159,6 +174,7 @@ async function run() {
       allowLowQuality,
       noAutofix,
       suite,
+      segment,
       urlsEvaluated: total,
     },
     aggregate: {

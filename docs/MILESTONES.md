@@ -223,3 +223,18 @@
 - Validation:
   - `canva.com` now routes through metadata-fallback with clean feature names (no browser-error phrasing).
   - `npm run eval:real:smoke`: `100%` pack accuracy (`10/10`) and `100%` pass rate (`10/10`).
+
+### M18 - Customer Corpus + Core ICP Benchmark Gate
+
+- Added customer-style benchmark suite:
+  - `src/pipeline/benchmark-customer-urls.ts`
+  - segmented into `core-icp`, `adjacent-icp`, and `stress`.
+- Extended real eval runner with segment filtering:
+  - `eval-real --suite=customer --segment=core-icp`
+- Added commands:
+  - `npm run eval:customer`
+  - `npm run eval:customer:core`
+- Established baseline:
+  - `eval:customer`: pack `87.1%` (`27/31`), quality pass `100%` (`31/31`)
+  - `eval:customer:core`: pack `95.2%` (`20/21`), quality pass `100%` (`21/21`)
+- Added corpus documentation: `docs/CUSTOMER_CORPUS.md`.

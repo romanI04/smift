@@ -52,10 +52,12 @@ Scope:
 - Better sparse-page extraction and feature grounding.
 - Stronger hook quality (first 5 seconds).
 - Domain pack coverage tuning with measured regressions.
+- Maintain customer corpus and optimize primarily on `core-icp`.
 
 Exit gates:
 - `eval:real:smoke` stays >= 95% quality pass and >= 95% pack accuracy.
 - `eval:real --limit=20` stays >= 90% quality pass and >= 90% pack accuracy.
+- `eval:customer:core` stays >= 90% quality pass and >= 90% pack accuracy.
 - Manual review of 20 URLs: <= 1 major relevance failure.
 
 ### Phase B - Product Workflow

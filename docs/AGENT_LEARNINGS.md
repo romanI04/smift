@@ -58,6 +58,7 @@
 
 - `npm run eval:real -- --limit=N` is the fastest way to track real-domain pack drift and script quality together.
 - Use `npm run eval:real:smoke` for CI: it runs a stable multi-pack subset and enforces threshold gates.
+- Use `npm run eval:customer:core` as the primary business-quality gate for model tuning work.
 - Track both metrics: quality pass-rate can stay high while pack accuracy drops; both need to be monitored.
 - B2B recall depends heavily on customer-service/sales vocabulary; signal terms now help recover sparse or marketing-heavy pages.
 - After changing one pack’s signal terms, run `eval:real` on at least 20 URLs to check cross-pack regressions.

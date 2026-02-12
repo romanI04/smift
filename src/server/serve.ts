@@ -2,6 +2,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import {spawn} from 'child_process';
+import {DOMAIN_PACK_IDS, type DomainPackId} from '../pipeline/domain-packs';
 
 type JobStatus = 'queued' | 'running' | 'completed' | 'failed';
 
@@ -20,6 +21,7 @@ interface JobRecord {
     quality: 'draft' | 'yc';
     voice: 'none' | 'openai' | 'elevenlabs' | 'chatterbox';
     skipRender: boolean;
+    pack: 'auto' | DomainPackId;
   };
   logs: string[];
 }
@@ -105,6 +107,10 @@ function createJob(url: string, payload: Record<string, unknown>): JobRecord {
     ? String(payload.voice)
     : 'none') as JobRecord['options']['voice'];
   const skipRender = payload.skipRender === undefined ? true : Boolean(payload.skipRender);
+  const packRaw = String(payload.pack ?? 'auto');
+  const pack = (packRaw === 'auto' || DOMAIN_PACK_IDS.includes(packRaw as DomainPackId)
+    ? packRaw
+    : 'auto') as JobRecord['options']['pack'];
 
   return {
     id,
@@ -117,6 +123,7 @@ function createJob(url: string, payload: Record<string, unknown>): JobRecord {
       quality,
       voice,
       skipRender,
+      pack,
     },
     logs: [],
   };
@@ -142,6 +149,7 @@ function tickQueue() {
     job.url,
     `--voice=${job.options.voice}`,
     `--quality=${job.options.quality}`,
+    `--pack=${job.options.pack}`,
     '--template=auto',
     '--max-script-attempts=2',
     '--min-quality=80',
@@ -245,6 +253,10 @@ async function readJsonBody(req: http.IncomingMessage): Promise<Record<string, u
 }
 
 function renderHtml() {
+  const packOptions = ['auto', ...DOMAIN_PACK_IDS]
+    .map((id) => `<option value="${id}">${id}</option>`)
+    .join('');
+
   return `<!doctype html>
 <html>
 <head>
@@ -275,6 +287,7 @@ function renderHtml() {
       <div class="row">
         <input id="url" type="text" placeholder="https://linear.app" />
         <select id="quality"><option value="draft">draft</option><option value="yc">yc</option></select>
+        <select id="pack">${packOptions}</select>
         <select id="strict"><option value="false">standard</option><option value="true">strict</option></select>
         <select id="skipRender"><option value="true">script-only</option><option value="false">render-video</option></select>
         <button id="submit">Run</button>
@@ -314,6 +327,7 @@ function renderHtml() {
     const payload = {
       url: document.getElementById('url').value,
       quality: document.getElementById('quality').value,
+      pack: document.getElementById('pack').value,
       strict: document.getElementById('strict').value === 'true',
       skipRender: document.getElementById('skipRender').value === 'true',
       voice: 'none'

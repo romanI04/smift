@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import type {ScrapedData} from './scraper';
 import type {ScriptResult} from './script-types';
 import type {TemplateProfile} from './templates';
+import type {DomainPack} from './domain-packs';
 
 const BASE_SYSTEM_PROMPT = `You are a senior launch-video script writer.
 Given scraped website data, generate structured script JSON for a 35-45 second intro video.
@@ -51,6 +52,7 @@ Rules:
 
 export interface GenerateScriptOptions {
   templateProfile?: TemplateProfile;
+  domainPack?: DomainPack;
   qualityFeedback?: string[];
   maxRetries?: number;
 }
@@ -69,7 +71,7 @@ export async function generateScript(
   let lastError = 'Unknown script generation error';
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
-    const systemPrompt = buildSystemPrompt(options.templateProfile);
+    const systemPrompt = buildSystemPrompt(options.templateProfile, options.domainPack);
     const userPrompt = buildUserPrompt(scraped, options, attempt);
 
     const response = await client.chat.completions.create({
@@ -92,7 +94,7 @@ export async function generateScript(
       const candidate = JSON.parse(content);
       validateParsedScript(candidate);
 
-      candidate.narrationSegments = enforceNarrationWordRange(candidate.narrationSegments);
+      candidate.narrationSegments = enforceNarrationWordRange(candidate.narrationSegments, options.domainPack);
       const words = countWords(candidate.narrationSegments.join(' '));
       if (words < 100 || words > 140) {
         lastError = `Narration word count ${words} outside 100-140 after normalization`;
@@ -132,14 +134,22 @@ export async function generateScript(
   };
 }
 
-function buildSystemPrompt(templateProfile?: TemplateProfile): string {
-  if (!templateProfile) return BASE_SYSTEM_PROMPT;
-
-  return `${BASE_SYSTEM_PROMPT}
-
-Template profile: ${templateProfile.label}
+function buildSystemPrompt(templateProfile?: TemplateProfile, domainPack?: DomainPack): string {
+  let prompt = BASE_SYSTEM_PROMPT;
+  if (templateProfile) {
+    prompt += `\n\nTemplate profile: ${templateProfile.label}
 Template objective: ${templateProfile.description}
 Additional style instructions: ${templateProfile.systemInstructions}`;
+  }
+  if (domainPack) {
+    prompt += `\n\nDomain pack: ${domainPack.label}
+Domain objective: ${domainPack.description}
+Pack style hint: ${domainPack.scriptStyleHint}
+Allowed icons for features: ${domainPack.allowedIcons.join(', ')}
+Forbidden terms for this domain: ${domainPack.forbiddenTerms.join(', ') || 'none'}
+Concrete signal fields to prefer: ${domainPack.concreteFields.join(', ')}`;
+  }
+  return prompt;
 }
 
 function buildUserPrompt(
@@ -154,6 +164,14 @@ function buildUserPrompt(
   const retryBlock = attempt === 0
     ? ''
     : `\nRetry attempt ${attempt + 1}: tighten structure and realism while keeping JSON valid.`;
+
+  const packBlock = options.domainPack
+    ? `\nDomain pack selected: ${options.domainPack.id}
+Use this domain vocabulary and avoid terms outside it.
+Allowed icons: ${options.domainPack.allowedIcons.join(', ')}
+Forbidden terms: ${options.domainPack.forbiddenTerms.join(', ') || 'none'}
+Concrete fields to include in demo lines: ${options.domainPack.concreteFields.join(', ') || 'Status, Result'}`
+    : '';
 
   return `Generate a script for this product:\n
 URL: ${scraped.url}
@@ -173,6 +191,7 @@ Body excerpt:
 ${scraped.bodyText.slice(0, 2200)}
 
 Colors found: ${scraped.colors.join(', ')}
+${packBlock}
 ${feedbackBlock}
 ${retryBlock}`;
 }
@@ -204,14 +223,9 @@ function validateParsedScript(parsed: any): void {
   }
 }
 
-function enforceNarrationWordRange(segments: string[]): string[] {
+function enforceNarrationWordRange(segments: string[], domainPack?: DomainPack): string[] {
   const next = [...segments];
-  const boosters = [
-    'This reduces delay between planning and execution.',
-    'Teams keep context while priorities keep moving.',
-    'Work stays visible with ownership and status in one place.',
-    'You can move from signal to action without tool switching.',
-  ];
+  const boosters = buildBoosters(domainPack);
 
   const countAll = () => countWords(next.join(' '));
 
@@ -233,6 +247,26 @@ function enforceNarrationWordRange(segments: string[]): string[] {
   }
 
   return next;
+}
+
+function buildBoosters(domainPack?: DomainPack): string[] {
+  if (!domainPack) {
+    return [
+      'This reduces delay between planning and execution.',
+      'Teams keep context while priorities keep moving.',
+      'Work stays visible with ownership and status in one place.',
+      'You can move from signal to action without tool switching.',
+    ];
+  }
+
+  const fieldA = domainPack.concreteFields[0] ?? 'signals';
+  const fieldB = domainPack.concreteFields[1] ?? 'updates';
+  return [
+    `This keeps ${fieldA.toLowerCase()} signals visible as conditions change.`,
+    `Teams move faster when ${fieldB.toLowerCase()} data stays structured.`,
+    'Decisions become easier when context is clear and current.',
+    'You can act immediately without losing momentum between tools.',
+  ];
 }
 
 function countWords(value: string): number {

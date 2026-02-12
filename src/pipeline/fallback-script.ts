@@ -2,22 +2,23 @@ import type {Feature} from '../types';
 import type {ScrapedData} from './scraper';
 import type {ScriptResult} from './script-types';
 import type {TemplateProfile} from './templates';
+import type {DomainPack, DomainPackId, FeatureIconId} from './domain-packs';
 
-const DEFAULT_INTEGRATIONS = ['Slack', 'Notion', 'Google Drive', 'GitHub', 'Zapier', 'HubSpot'];
-
-export function buildFallbackScript(scraped: ScrapedData, template: TemplateProfile): ScriptResult {
+export function buildFallbackScript(
+  scraped: ScrapedData,
+  template: TemplateProfile,
+  domainPack: DomainPack,
+): ScriptResult {
   const brandName = inferBrandName(scraped);
   const brandUrl = scraped.domain;
   const brandColor = pickBrandColor(scraped.colors);
   const accentColor = pickAccentColor(scraped.colors, brandColor);
 
   const tagline = makeTagline(scraped);
-  const hookLine1 = 'your workflow';
-  const hookLine2 = 'is overloaded';
-  const hookKeyword = 'ship faster';
+  const hooks = buildHooks(domainPack.id);
 
-  const features = buildFeatures(scraped);
-  const integrations = buildIntegrations(scraped);
+  const features = buildFeatures(scraped, domainPack);
+  const integrations = buildIntegrations(scraped, domainPack);
   const ctaUrl = scraped.domain;
 
   const narrationSegments = buildNarration({
@@ -26,6 +27,7 @@ export function buildFallbackScript(scraped: ScrapedData, template: TemplateProf
     features,
     integrations,
     template,
+    domainPack,
   });
 
   const sceneWeights = narrationSegments.map((segment, i) => {
@@ -40,12 +42,13 @@ export function buildFallbackScript(scraped: ScrapedData, template: TemplateProf
     brandColor,
     accentColor,
     tagline,
-    hookLine1,
-    hookLine2,
-    hookKeyword,
+    hookLine1: hooks.hookLine1,
+    hookLine2: hooks.hookLine2,
+    hookKeyword: hooks.hookKeyword,
     features,
     integrations,
     ctaUrl,
+    domainPackId: domainPack.id,
     narrationSegments,
     sceneWeights,
   };
@@ -53,7 +56,7 @@ export function buildFallbackScript(scraped: ScrapedData, template: TemplateProf
 
 function inferBrandName(scraped: ScrapedData): string {
   const titleHead = scraped.title.split(/[|\-:]/)[0]?.trim();
-  if (titleHead && titleHead.length >= 2 && titleHead.length <= 40) return titleHead;
+  if (titleHead && titleHead.length >= 2 && titleHead.length <= 42) return titleHead;
 
   const domainCore = scraped.domain.replace(/^www\./, '').split('.')[0] ?? 'Brand';
   return domainCore.charAt(0).toUpperCase() + domainCore.slice(1);
@@ -81,29 +84,47 @@ function normalizeHex(color: string): string {
 }
 
 function makeTagline(scraped: ScrapedData): string {
-  const source = scraped.description || scraped.ogDescription || scraped.headings[0] || 'Work moves faster here';
+  const source = scraped.description || scraped.ogDescription || scraped.headings[0] || 'Built for faster execution';
   const words = source
     .replace(/[|,:;.!?]/g, ' ')
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 8);
-  if (words.length < 3) return 'Workflows that move faster';
+  if (words.length < 3) return 'Built for better decisions';
   return words.join(' ');
 }
 
-function buildFeatures(scraped: ScrapedData): Feature[] {
+function buildHooks(packId: DomainPackId): {hookLine1: string; hookLine2: string; hookKeyword: string} {
+  const map: Record<DomainPackId, {hookLine1: string; hookLine2: string; hookKeyword: string}> = {
+    general: {hookLine1: 'your process', hookLine2: 'loses momentum', hookKeyword: 'fix the flow'},
+    'b2b-saas': {hookLine1: 'your workflows', hookLine2: 'are fragmented', hookKeyword: 'ship clearer'},
+    devtools: {hookLine1: 'your releases', hookLine2: 'slow down', hookKeyword: 'debug faster'},
+    'ecommerce-retail': {hookLine1: 'your store', hookLine2: 'leaks conversions', hookKeyword: 'optimize checkout'},
+    fintech: {hookLine1: 'your money ops', hookLine2: 'lack visibility', hookKeyword: 'control risk'},
+    gaming: {hookLine1: 'your climb', hookLine2: 'stalls mid patch', hookKeyword: 'play the meta'},
+    'media-creator': {hookLine1: 'your content', hookLine2: 'needs consistency', hookKeyword: 'grow audience'},
+    education: {hookLine1: 'your learners', hookLine2: 'need momentum', hookKeyword: 'improve outcomes'},
+    'real-estate': {hookLine1: 'your pipeline', hookLine2: 'drops deals', hookKeyword: 'close faster'},
+    'travel-hospitality': {hookLine1: 'your bookings', hookLine2: 'need precision', hookKeyword: 'delight guests'},
+    'logistics-ops': {hookLine1: 'your operations', hookLine2: 'lose timing', hookKeyword: 'move reliably'},
+    'social-community': {hookLine1: 'your community', hookLine2: 'needs structure', hookKeyword: 'raise engagement'},
+  };
+  return map[packId];
+}
+
+function buildFeatures(scraped: ScrapedData, domainPack: DomainPack): Feature[] {
   const seeds = scraped.features.filter((f) => f.length > 20).slice(0, 12);
   const selected = pickDistinctSeeds(seeds, 3);
 
   while (selected.length < 3) {
-    selected.push(['Automated workflow handoff', 'Real-time team visibility', 'Faster execution across tools'][selected.length]);
+    selected.push(defaultSeedForPack(domainPack.id, selected.length));
   }
 
   return selected.map((seed, index) => {
-    const icon = inferIcon(seed);
+    const icon = inferIcon(seed, domainPack.allowedIcons);
     const caption = captionFromSeed(seed);
-    const appName = appNameFromSeed(seed, index);
-    const demoLines = demoLinesFromSeed(seed, index);
+    const appName = appNameFromSeed(seed, index, domainPack.id);
+    const demoLines = demoLinesFromSeed(seed, index, domainPack);
     return {
       icon,
       appName,
@@ -117,9 +138,7 @@ function pickDistinctSeeds(seeds: string[], count: number): string[] {
   const out: string[] = [];
   for (const seed of seeds) {
     const normalized = normalize(seed);
-    if (out.some((existing) => overlap(normalize(existing), normalized) > 0.7)) {
-      continue;
-    }
+    if (out.some((existing) => overlap(normalize(existing), normalized) > 0.7)) continue;
     out.push(seed);
     if (out.length >= count) break;
   }
@@ -131,7 +150,7 @@ function overlap(a: string, b: string): number {
   const bTokens = new Set(b.split(/\s+/).filter(Boolean));
   if (aTokens.size === 0 || bTokens.size === 0) return 0;
   let common = 0;
-  for (const t of aTokens) if (bTokens.has(t)) common += 1;
+  for (const token of aTokens) if (bTokens.has(token)) common += 1;
   return common / Math.min(aTokens.size, bTokens.size);
 }
 
@@ -139,17 +158,28 @@ function normalize(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-function inferIcon(seed: string): Feature['icon'] {
+function inferIcon(seed: string, allowedIcons: FeatureIconId[]): Feature['icon'] {
   const text = seed.toLowerCase();
-  if (/mail|inbox|email/.test(text)) return 'mail';
-  if (/support|ticket|case|help/.test(text)) return 'support';
-  if (/calendar|schedule|meeting/.test(text)) return 'calendar';
-  if (/analytics|metrics|revenue|dashboard/.test(text)) return 'analytics';
-  if (/checkout|order|cart|product|shop/.test(text)) return 'commerce';
-  if (/code|developer|api/.test(text)) return 'code';
-  if (/chat|message|conversation/.test(text)) return 'chat';
-  if (/finance|billing|invoice|payment/.test(text)) return 'finance';
-  return 'generic';
+  const ranked: FeatureIconId[] = [];
+
+  if (/mail|inbox|email/.test(text)) ranked.push('mail');
+  if (/support|ticket|case|help/.test(text)) ranked.push('support');
+  if (/calendar|schedule|meeting|booking/.test(text)) ranked.push('calendar');
+  if (/analytics|metrics|insights|trend|rate|rank/.test(text)) ranked.push('analytics');
+  if (/checkout|order|cart|product|shop/.test(text)) ranked.push('commerce');
+  if (/code|developer|api|deploy|sdk/.test(text)) ranked.push('code');
+  if (/chat|message|conversation|community/.test(text)) ranked.push('chat');
+  if (/finance|billing|invoice|payment|risk/.test(text)) ranked.push('finance');
+  if (/video|stream|content|media/.test(text)) ranked.push('media');
+  if (/social|creator|audience/.test(text)) ranked.push('social');
+
+  ranked.push('generic');
+
+  for (const icon of ranked) {
+    if (allowedIcons.includes(icon)) return icon;
+  }
+
+  return allowedIcons[0] ?? 'generic';
 }
 
 function captionFromSeed(seed: string): string {
@@ -157,39 +187,81 @@ function captionFromSeed(seed: string): string {
     .replace(/[^a-zA-Z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter(Boolean)
-    .slice(0, 4);
-  if (words.length < 2) return 'Faster team execution';
+    .slice(0, 5);
+  if (words.length < 2) return 'Clear execution signal';
   return words.join(' ');
 }
 
-function appNameFromSeed(seed: string, index: number): string {
+function appNameFromSeed(seed: string, index: number, packId: DomainPackId): string {
   const cleaned = seed
     .replace(/[^a-zA-Z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter(Boolean)
-    .slice(0, 2)
+    .slice(0, 3)
     .join(' ')
     .trim();
 
   if (cleaned.length >= 3) return cleaned;
 
-  const defaults = ['Execution Board', 'Ops Queue', 'Team Timeline'];
-  return defaults[index] ?? `Feature ${index + 1}`;
+  const defaults: Record<DomainPackId, string[]> = {
+    general: ['Core Workflow', 'Signal Board', 'Action Queue'],
+    'b2b-saas': ['Ops Board', 'Execution Queue', 'Team Signals'],
+    devtools: ['Build Monitor', 'Deploy Queue', 'Incident Feed'],
+    'ecommerce-retail': ['Merch Dashboard', 'Order Flow', 'Retention Signals'],
+    fintech: ['Risk Console', 'Txn Monitor', 'Settlement Queue'],
+    gaming: ['Tier Board', 'Patch Tracker', 'Comp Builder'],
+    'media-creator': ['Content Pipeline', 'Audience Signals', 'Publish Planner'],
+    education: ['Learner Progress', 'Curriculum Planner', 'Assessment Board'],
+    'real-estate': ['Listing Pipeline', 'Offer Tracker', 'Showing Planner'],
+    'travel-hospitality': ['Reservation Desk', 'Guest Timeline', 'Property Ops'],
+    'logistics-ops': ['Route Planner', 'Shipment Board', 'Capacity Console'],
+    'social-community': ['Community Feed', 'Moderation Queue', 'Engagement Board'],
+  };
+
+  return defaults[packId][index] ?? `Feature ${index + 1}`;
 }
 
-function demoLinesFromSeed(seed: string, index: number): string[] {
-  const defaults = [
-    ['Project rollout status', 'Owner: Maya', 'Due: Friday 4:00 PM', 'Priority: High'],
-    ['Customer escalation queue', 'Status: In Progress', 'Assigned to: Jordan', 'SLA: 2h'],
-    ['Weekly growth dashboard', 'Revenue: $48.2k', 'Conversion: 3.8%', 'Action: Launch experiment B'],
+function demoLinesFromSeed(seed: string, index: number, pack: DomainPack): string[] {
+  const firstLine = seed.length > 64 ? `${seed.slice(0, 61)}...` : seed;
+  const fields = pack.concreteFields;
+
+  return [
+    firstLine,
+    `${fields[0] ?? 'Status'}: ${sampleValue(fields[0] ?? 'Status', index)}`,
+    `${fields[1] ?? 'Update'}: ${sampleValue(fields[1] ?? 'Update', index + 1)}`,
+    `${fields[2] ?? 'Next Step'}: ${sampleValue(fields[2] ?? 'Next Step', index + 2)}`,
   ];
-
-  const base = defaults[index] ?? defaults[0];
-  const firstLine = seed.length > 60 ? `${seed.slice(0, 57)}...` : seed;
-  return [firstLine, ...base.slice(1)];
 }
 
-function buildIntegrations(scraped: ScrapedData): string[] {
+function sampleValue(field: string, seed: number): string {
+  const key = field.toLowerCase();
+  const n = (seed % 5) + 1;
+  if (key.includes('patch')) return `14.${n}`;
+  if (key.includes('win')) return `${52 + n}.${n}%`;
+  if (key.includes('rank')) return `Top ${n * 100}`;
+  if (key.includes('build')) return `Variant ${String.fromCharCode(64 + n)}`;
+  if (key.includes('order')) return `#ORD-${4200 + n}`;
+  if (key.includes('conversion')) return `${2 + n * 0.3}%`;
+  if (key.includes('stock')) return `${90 - n * 8} units`;
+  if (key.includes('risk')) return `${60 + n * 5}/100`;
+  if (key.includes('txn')) return `${n * 240} / hr`;
+  if (key.includes('deploy')) return `build-${100 + n}`;
+  if (key.includes('latency')) return `${110 + n * 7}ms`;
+  if (key.includes('error')) return `${0.2 + n * 0.1}%`;
+  if (key.includes('views')) return `${12 + n * 4}k`;
+  if (key.includes('retention')) return `${38 + n * 3}%`;
+  if (key.includes('cohort')) return `C${2026}${n}`;
+  if (key.includes('occupancy')) return `${72 + n * 4}%`;
+  if (key.includes('arrival')) return `Today ${9 + n}:00`;
+  if (key.includes('eta')) return `${15 + n} min`;
+  if (key.includes('route')) return `R-${30 + n}`;
+  if (key.includes('members')) return `${n * 1200}`;
+  if (key.includes('engagement')) return `${6 + n * 0.8}%`;
+  if (key.includes('status')) return ['Ready', 'In Progress', 'Blocked'][seed % 3];
+  return `${field} ${n}`;
+}
+
+function buildIntegrations(scraped: ScrapedData, pack: DomainPack): string[] {
   const normalized = new Set<string>();
   const fromLinks = scraped.links
     .map((entry) => entry.split(':')[0].trim())
@@ -197,7 +269,7 @@ function buildIntegrations(scraped: ScrapedData): string[] {
     .slice(0, 12);
 
   const picked: string[] = [];
-  for (const candidate of [...fromLinks, ...DEFAULT_INTEGRATIONS]) {
+  for (const candidate of [...fromLinks, ...pack.fallbackIntegrations]) {
     const key = candidate.toLowerCase();
     if (normalized.has(key)) continue;
     normalized.add(key);
@@ -214,32 +286,71 @@ function buildNarration(args: {
   features: Feature[];
   integrations: string[];
   template: TemplateProfile;
+  domainPack: DomainPack;
 }): string[] {
-  const {brandName, ctaUrl, features, integrations, template} = args;
+  const {brandName, ctaUrl, features, integrations, template, domainPack} = args;
+
+  const valuePhrase = domainOutcomePhrase(domainPack.id);
 
   const segments = [
-    'Why do teams still lose momentum after great planning?',
-    'Your workflow is overloaded, updates are scattered, and execution slows when context gets fragmented.',
-    `Meet ${brandName}. A clearer way to execute.`,
-    `${features[0].appName} keeps critical work visible with clear ownership, priority, and next action so decisions turn into shipping steps faster.`,
-    `${features[1].appName} removes handoff friction by capturing context where work happens, so teams can resolve blockers before timelines slip.`,
-    `${features[2].appName} gives live performance signals and concrete metrics, helping you focus on outcomes that move conversion and retention.`,
-    `It plugs into ${integrations.slice(0, 3).join(', ')} and your existing stack, so adoption is fast and workflows stay intact.`,
-    `Launch faster with ${brandName} at ${ctaUrl}.`,
+    `What if your ${domainNoun(domainPack.id)} could improve every cycle?`,
+    `Most teams lose momentum because signals arrive late and decisions stay fragmented across tools and channels.`,
+    `Meet ${brandName}, built for clearer execution in this domain.`,
+    `${features[0].appName} gives your team live context, so priorities are obvious and the next move happens faster.`,
+    `${features[1].appName} reduces lag between insight and action by keeping key updates structured and visible.`,
+    `${features[2].appName} turns raw updates into practical decisions, so ${valuePhrase}.`,
+    `It connects with ${integrations.slice(0, 3).join(', ')} so you can keep your current workflow and move faster.`,
+    `See ${brandName} in action at ${ctaUrl}.`,
   ];
 
   return normalizeNarrationLength(segments, template.id);
 }
 
+function domainOutcomePhrase(packId: DomainPackId): string {
+  const map: Record<DomainPackId, string> = {
+    general: 'results improve without extra overhead',
+    'b2b-saas': 'teams ship work with less status churn',
+    devtools: 'engineering cycles stay stable under pressure',
+    'ecommerce-retail': 'conversion and retention move in the right direction',
+    fintech: 'risk and control stay visible in real time',
+    gaming: 'players stay ahead of every patch shift',
+    'media-creator': 'content output and engagement stay consistent',
+    education: 'learners progress with more confidence',
+    'real-estate': 'deals move from interest to close faster',
+    'travel-hospitality': 'guest experience stays smooth from booking to arrival',
+    'logistics-ops': 'operations stay on time with fewer surprises',
+    'social-community': 'community quality and engagement stay healthy',
+  };
+  return map[packId];
+}
+
+function domainNoun(packId: DomainPackId): string {
+  const map: Record<DomainPackId, string> = {
+    general: 'product',
+    'b2b-saas': 'operations stack',
+    devtools: 'engineering workflow',
+    'ecommerce-retail': 'commerce operation',
+    fintech: 'financial workflow',
+    gaming: 'competitive play',
+    'media-creator': 'content engine',
+    education: 'learning experience',
+    'real-estate': 'deal pipeline',
+    'travel-hospitality': 'guest operation',
+    'logistics-ops': 'supply operation',
+    'social-community': 'community workflow',
+  };
+  return map[packId];
+}
+
 function normalizeNarrationLength(segments: string[], templateId: TemplateProfile['id']): string[] {
   const addOns = templateId === 'founder-story'
     ? [
-      'It keeps teams aligned without adding another layer of overhead.',
-      'You can see exactly what to do next, and why it matters now.',
+      'It keeps every decision grounded in clear context.',
+      'You can see what changed and what to do next.',
     ]
     : [
-      'This cuts status churn and shortens the path from planning to delivery.',
-      'Everyone sees ownership, risk, and momentum in one operating view.',
+      'This shortens the gap between signal and execution.',
+      'Your team gets predictable momentum across each cycle.',
     ];
 
   const countWords = () => segments.join(' ').trim().split(/\s+/).filter(Boolean).length;
@@ -252,7 +363,7 @@ function normalizeNarrationLength(segments: string[], templateId: TemplateProfil
   }
 
   if (countWords() > 140) {
-    const caps = [10, 16, 10, 22, 22, 22, 20, 12];
+    const caps = [12, 16, 12, 21, 21, 21, 18, 14];
     for (let idx = 0; idx < segments.length; idx++) {
       const words = segments[idx].split(/\s+/).filter(Boolean);
       if (words.length > caps[idx]) {
@@ -262,4 +373,23 @@ function normalizeNarrationLength(segments: string[], templateId: TemplateProfil
   }
 
   return segments;
+}
+
+function defaultSeedForPack(packId: DomainPackId, index: number): string {
+  const defaults: Record<DomainPackId, string[]> = {
+    general: ['Structured execution view', 'Signal tracking in one place', 'Action-ready updates'],
+    'b2b-saas': ['Workflow automation visibility', 'Cross-team status clarity', 'Prioritized execution queue'],
+    devtools: ['Deploy and incident visibility', 'Build signal aggregation', 'Runtime performance tracking'],
+    'ecommerce-retail': ['Checkout flow optimization', 'Inventory and demand signals', 'Retention performance updates'],
+    fintech: ['Real-time transaction monitoring', 'Risk and compliance signal board', 'Settlement and reconciliation visibility'],
+    gaming: ['Patch-by-patch tier tracking', 'Meta trend signal board', 'Comp and rank optimization insights'],
+    'media-creator': ['Content pipeline planning', 'Audience signal visibility', 'Publishing performance tracking'],
+    education: ['Learner progress tracking', 'Curriculum sequencing visibility', 'Assessment performance insights'],
+    'real-estate': ['Listing and showing timeline', 'Offer progression tracking', 'Close readiness signals'],
+    'travel-hospitality': ['Reservation operations visibility', 'Guest journey status tracking', 'Property readiness signals'],
+    'logistics-ops': ['Shipment and route visibility', 'Capacity planning signals', 'On-time performance tracking'],
+    'social-community': ['Community engagement tracking', 'Moderation status visibility', 'Member health signal board'],
+  };
+
+  return defaults[packId][index] ?? defaults.general[index] ?? 'Execution signal update';
 }

@@ -1,4 +1,5 @@
 import type {ScrapedData} from './scraper';
+import type {DomainPackId} from './domain-packs';
 
 export type TemplateId = 'yc-saas' | 'product-demo' | 'founder-story';
 
@@ -49,11 +50,23 @@ export function getTemplateProfile(id: TemplateId): TemplateProfile {
   return TEMPLATE_PROFILES[id];
 }
 
-export function selectTemplate(scraped: ScrapedData, requested?: 'auto' | TemplateId): TemplateSelection {
+export function selectTemplate(
+  scraped: ScrapedData,
+  requested?: 'auto' | TemplateId,
+  domainPackId?: DomainPackId,
+): TemplateSelection {
   if (requested && requested !== 'auto') {
     return {
       profile: TEMPLATE_PROFILES[requested],
       reason: `Selected by --template=${requested}`,
+    };
+  }
+
+  if (domainPackId) {
+    const packTemplate = defaultTemplateForPack(domainPackId);
+    return {
+      profile: TEMPLATE_PROFILES[packTemplate],
+      reason: `Selected from domain pack ${domainPackId} -> ${packTemplate}`,
     };
   }
 
@@ -99,6 +112,27 @@ export function selectTemplate(scraped: ScrapedData, requested?: 'auto' | Templa
     profile: TEMPLATE_PROFILES['yc-saas'],
     reason: `Auto-selected yc-saas as default B2B template (saas score ${saasScore})`,
   };
+}
+
+export function defaultTemplateForPack(packId: DomainPackId): TemplateId {
+  switch (packId) {
+    case 'ecommerce-retail':
+    case 'gaming':
+    case 'real-estate':
+    case 'travel-hospitality':
+      return 'product-demo';
+    case 'media-creator':
+    case 'education':
+    case 'social-community':
+    case 'general':
+      return 'founder-story';
+    case 'b2b-saas':
+    case 'devtools':
+    case 'fintech':
+    case 'logistics-ops':
+    default:
+      return 'yc-saas';
+  }
 }
 
 function countMatches(text: string, terms: string[]): number {

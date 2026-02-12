@@ -1,6 +1,7 @@
 import type {ScrapedData} from './scraper';
 import type {ScriptResult} from './script-types';
 import type {TemplateProfile} from './templates';
+import type {DomainPack} from './domain-packs';
 
 export interface QualityReport {
   score: number;
@@ -15,6 +16,7 @@ interface ScoreArgs {
   script: ScriptResult;
   scraped: ScrapedData;
   template: TemplateProfile;
+  domainPack: DomainPack;
   minScore: number;
   maxWarnings?: number;
   failOnWarnings?: boolean;
@@ -29,7 +31,7 @@ const PLACEHOLDER_PATTERNS = [
 ];
 
 export function scoreScriptQuality(args: ScoreArgs): QualityReport {
-  const {script, scraped, template, minScore, maxWarnings = 3, failOnWarnings = false} = args;
+  const {script, scraped, template, domainPack, minScore, maxWarnings = 3, failOnWarnings = false} = args;
   const blockers: string[] = [];
   const warnings: string[] = [];
   const notes: string[] = [];
@@ -85,6 +87,11 @@ export function scoreScriptQuality(args: ScoreArgs): QualityReport {
       break;
     }
     appNames.add(app);
+
+    if (!domainPack.allowedIcons.includes(feature.icon as any)) {
+      warnings.push(`Feature icon "${feature.icon}" is not allowed for domain pack "${domainPack.id}".`);
+      score -= 5;
+    }
   }
 
   for (const feature of script.features) {
@@ -105,7 +112,7 @@ export function scoreScriptQuality(args: ScoreArgs): QualityReport {
       score -= 3;
     }
 
-    if (!containsConcreteSignal(joined)) {
+    if (!containsConcreteSignal(joined, domainPack.concreteFields)) {
       warnings.push(`Feature "${feature.appName}" lacks concrete on-screen detail (names/numbers/status).`);
       score -= 3;
     }
@@ -129,6 +136,13 @@ export function scoreScriptQuality(args: ScoreArgs): QualityReport {
     }
   }
 
+  for (const forbidden of domainPack.forbiddenTerms) {
+    if (containsTerm(textCorpus, forbidden)) {
+      warnings.push(`Domain mismatch term detected for pack ${domainPack.id}: "${forbidden}".`);
+      score -= 6;
+    }
+  }
+
   if (!script.narrationSegments[2]?.toLowerCase().includes(script.brandName.toLowerCase().split(' ')[0] ?? '')) {
     warnings.push('Wordmark narration segment should explicitly introduce the brand name.');
     score -= 4;
@@ -137,6 +151,19 @@ export function scoreScriptQuality(args: ScoreArgs): QualityReport {
   if (script.integrations.length < 2 || script.integrations.length > 12) {
     warnings.push('Integrations should contain 2-12 items.');
     score -= 3;
+  }
+
+  const integrationOverlap = script.integrations.some((item) =>
+    domainPack.fallbackIntegrations.some((candidate) => normalize(item) === normalize(candidate)),
+  );
+  if (!integrationOverlap) {
+    warnings.push(`No integrations overlap with domain pack defaults for "${domainPack.id}".`);
+    score -= 2;
+  }
+
+  if (script.domainPackId && script.domainPackId !== domainPack.id) {
+    warnings.push(`Script pack id "${script.domainPackId}" does not match selected pack "${domainPack.id}".`);
+    score -= 4;
   }
 
   const targetWeight = template.sceneWeightHint;
@@ -181,12 +208,26 @@ function normalizeDomain(urlOrDomain: string): string {
   }
 }
 
-function containsConcreteSignal(value: string): boolean {
-  return /\d/.test(value) || /(status|due|owner|assigned|priority|revenue|conversion|ticket|order|ETA)/i.test(value);
+function containsConcreteSignal(value: string, fields: string[]): boolean {
+  const fieldRegex = fields.length > 0
+    ? new RegExp(fields.map((f) => escapeRegex(f)).join('|'), 'i')
+    : null;
+  return /\d/.test(value) || /(status|due|owner|assigned|priority|revenue|conversion|ticket|order|ETA)/i.test(value) || Boolean(fieldRegex && fieldRegex.test(value));
 }
 
 function averageDeviation(a: number[], b: number[]): number {
   if (a.length !== b.length || a.length === 0) return 0;
   const total = a.reduce((acc, cur, idx) => acc + Math.abs(cur - b[idx]), 0);
   return total / a.length;
+}
+
+function containsTerm(haystack: string, term: string): boolean {
+  const normalized = term.toLowerCase().trim();
+  if (!normalized) return false;
+  const phrase = normalized.split(/\s+/).map((part) => escapeRegex(part)).join('\\s+');
+  return new RegExp(`(^|\\W)${phrase}(?=\\W|$)`, 'i').test(haystack.toLowerCase());
+}
+
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

@@ -23,6 +23,15 @@
 - Server is intentionally single-worker queue to avoid local resource contention.
 - Jobs are persisted to `out/jobs/<id>.json` for operational traceability.
 - API returns local artifact paths; downstream systems can upload them if needed.
+- Server now supports pack control (`payload.pack` / UI dropdown), forwarded to `generate --pack=...`.
+
+## Domain Pack System
+
+- Treat `general` as the stability fallback, not as a primary happy path.
+- Use `selectDomainPack(scraped, requested)` once after scraping, then pass the result through scriptgen, autofix, fallback, and quality scoring.
+- Keep pack metadata cohesive: when adding a new pack, always define keywords, allowed icons, forbidden terms, concrete fields, fallback integrations, and style hint together.
+- Template routing should stay pack-aware (`defaultTemplateForPack`), otherwise auto-template can drift into irrelevant visual language.
+- Check `out/<name>-quality.json` for `domainPack` and `domainPackReason` during debugging; it is the quickest signal for misclassification.
 
 ## Known Gaps / Next Work
 
@@ -31,3 +40,5 @@
 - Add persistent queue backend (SQLite/Redis) for crash recovery.
 - Add auth/quotas before exposing self-serve runner beyond localhost.
 - Add a renderless "quality-only" output mode in server responses for fast triage.
+- Improve pack scoring beyond keyword counts (e.g. weighted title/body fields + confidence threshold).
+- Add offline regression fixture set per pack to detect cross-domain leakage before shipping.

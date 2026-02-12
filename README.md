@@ -26,6 +26,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `--voice=none|openai|elevenlabs|chatterbox`
 - `--quality=draft|yc`
 - `--template=auto|yc-saas|product-demo|founder-story`
+- `--pack=auto|general|b2b-saas|devtools|ecommerce-retail|fintech|gaming|media-creator|education|real-estate|travel-hospitality|logistics-ops|social-community`
 - `--voice-mode=single|segmented`
 - `--strict` or `--quality-mode=strict`
 - `--min-quality=<n>`
@@ -45,6 +46,13 @@ Generated artifacts land in `out/`:
 - `<name>-voice.mp3` (if voice enabled)
 - `<name>.mp4` (if render enabled)
 - `eval-summary-*.json` + `.csv` (batch eval)
+
+## Domain Packs
+
+- Domain packs are selected automatically from scraped copy (`--pack=auto`) or forced via `--pack=<id>`.
+- Pack selection drives template default, icon constraints, forbidden terms, concrete on-screen fields, and fallback integrations.
+- Pack metadata is defined in `src/pipeline/domain-packs.ts`.
+- Quality report includes `domainPack` and `domainPackReason` for traceability.
 
 ## Docs
 

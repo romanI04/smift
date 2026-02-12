@@ -33,3 +33,18 @@
   - `GET /health`
 - Added `npm run serve` command.
 
+### M5 - Domain Pack Framework + Strong Fallback
+
+- Added domain-pack system (`src/pipeline/domain-packs.ts`) with major families:
+  - `general`, `b2b-saas`, `devtools`, `ecommerce-retail`, `fintech`, `gaming`, `media-creator`, `education`, `real-estate`, `travel-hospitality`, `logistics-ops`, `social-community`.
+- Added `--pack=auto|<pack-id>` to pipeline and server job submission.
+- Pack selection now informs template choice (`selectTemplate(..., domainPackId)`).
+- Script generation prompt now includes pack constraints:
+  - allowed icons
+  - forbidden terms
+  - concrete field hints
+  - style guidance
+- Reworked fallback script builder and auto-fix to be pack-aware (no hardcoded SaaS defaults).
+- Updated quality scoring to validate pack alignment (icons, forbidden terms, integrations, concrete fields).
+- Reworked `FeatureDemo` analytics mockup to consume dynamic demo lines instead of fixed SaaS metrics.
+- Improved scraper reliability with URL candidate retries (`http/https`, `www/non-www`).

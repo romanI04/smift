@@ -1,20 +1,24 @@
 import type {ScriptResult} from './script-types';
 import type {ScrapedData} from './scraper';
+import type {DomainPack} from './domain-packs';
 
 export interface AutoFixResult {
   script: ScriptResult;
   actions: string[];
 }
 
-const DEFAULT_INTEGRATIONS = ['Slack', 'Notion', 'Google Drive', 'Zapier'];
-
-export function autoFixScriptQuality(script: ScriptResult, scraped: ScrapedData): AutoFixResult {
+export function autoFixScriptQuality(
+  script: ScriptResult,
+  scraped: ScrapedData,
+  domainPack: DomainPack,
+): AutoFixResult {
   const next: ScriptResult = {
     ...script,
     features: script.features.map((feature) => ({...feature, demoLines: [...feature.demoLines]})),
     integrations: [...script.integrations],
     narrationSegments: [...script.narrationSegments],
     sceneWeights: Array.isArray(script.sceneWeights) ? [...script.sceneWeights] : undefined,
+    domainPackId: domainPack.id,
   };
 
   const actions: string[] = [];
@@ -43,37 +47,57 @@ export function autoFixScriptQuality(script: ScriptResult, scraped: ScrapedData)
     actions.push('Forced brand mention in segment 3 narration.');
   }
 
+  const forbiddenRegexes = domainPack.forbiddenTerms.map((term) => new RegExp(`\\b${escapeRegex(term)}\\b`, 'ig'));
+
   next.features = next.features.map((feature, idx) => {
     const updated = {...feature, demoLines: [...feature.demoLines]};
     if (!updated.caption || countWords(updated.caption) > 6) {
-      updated.caption = toMaxWords(updated.caption || 'Faster execution', 6);
+      updated.caption = toMaxWords(updated.caption || 'Clear execution signal', 6);
       actions.push(`Shortened caption for feature ${idx + 1}.`);
     }
 
     if (updated.demoLines.length === 0) {
-      updated.demoLines.push('Task status overview');
+      updated.demoLines.push(`${domainPack.concreteFields[0] ?? 'Status'}: ${sampleValue(domainPack.concreteFields[0] ?? 'Status', idx)}`);
       actions.push(`Added missing demo line for feature ${idx + 1}.`);
     }
 
     const demoText = updated.demoLines.join(' ');
-    if (countWords(demoText) < 6) {
-      updated.demoLines.push(`Owner: ${pickOwner(idx)}`);
+    if (countWords(demoText) < 8) {
+      const field = domainPack.concreteFields[idx % domainPack.concreteFields.length] ?? 'Status';
+      updated.demoLines.push(`${field}: ${sampleValue(field, idx)}`);
       actions.push(`Expanded thin demo text for feature ${idx + 1}.`);
     }
 
-    if (!hasConcreteSignal(updated.demoLines.join(' '))) {
-      updated.demoLines.push(`Status: ${pickStatus(idx)}`);
-      updated.demoLines.push(`Priority: ${pickPriority(idx)}`);
-      actions.push(`Injected concrete status fields for feature ${idx + 1}.`);
+    if (!hasConcreteSignal(updated.demoLines.join(' '), domainPack.concreteFields)) {
+      const f1 = domainPack.concreteFields[0] ?? 'Status';
+      const f2 = domainPack.concreteFields[1] ?? 'Update';
+      updated.demoLines.push(`${f1}: ${sampleValue(f1, idx)}`);
+      updated.demoLines.push(`${f2}: ${sampleValue(f2, idx + 1)}`);
+      actions.push(`Injected pack-specific concrete fields for feature ${idx + 1}.`);
     }
+
+    updated.demoLines = updated.demoLines.map((line) => {
+      let sanitized = line;
+      for (const regex of forbiddenRegexes) {
+        sanitized = sanitized.replace(regex, 'context signal');
+      }
+      return sanitized;
+    });
 
     return updated;
   });
 
+  next.features = next.features.map((feature) => {
+    if (domainPack.allowedIcons.includes(feature.icon as any)) return feature;
+    const replacement = domainPack.allowedIcons[0] ?? 'generic';
+    actions.push(`Replaced disallowed icon ${feature.icon} with ${replacement}.`);
+    return {...feature, icon: replacement};
+  });
+
   if (next.integrations.length < 2) {
     const needed = 2 - next.integrations.length;
-    next.integrations.push(...DEFAULT_INTEGRATIONS.slice(0, needed));
-    actions.push('Filled missing integrations.');
+    next.integrations.push(...domainPack.fallbackIntegrations.slice(0, needed));
+    actions.push('Filled missing integrations using domain pack defaults.');
   }
 
   if (next.integrations.length > 12) {
@@ -81,7 +105,15 @@ export function autoFixScriptQuality(script: ScriptResult, scraped: ScrapedData)
     actions.push('Trimmed integrations to 12 items.');
   }
 
-  next.narrationSegments = normalizeNarrationWordCount(next.narrationSegments);
+  next.narrationSegments = normalizeNarrationWordCount(next.narrationSegments, domainPack.concreteFields);
+  next.narrationSegments = next.narrationSegments.map((segment) => {
+    let sanitized = segment;
+    for (const regex of forbiddenRegexes) {
+      sanitized = sanitized.replace(regex, 'domain context');
+    }
+    return sanitized;
+  });
+
   next.sceneWeights = next.narrationSegments.map((segment) => Math.max(2, countWords(segment)));
 
   return {script: next, actions};
@@ -101,11 +133,11 @@ function normalizeHookLine(line: string): string {
   return expanded.join(' ');
 }
 
-function normalizeNarrationWordCount(segments: string[]): string[] {
+function normalizeNarrationWordCount(segments: string[], concreteFields: string[]): string[] {
   const next = [...segments];
   const boosters = [
-    'This keeps execution moving with less coordination overhead.',
-    'Teams can act faster because ownership and status stay explicit.',
+    `This keeps ${concreteFields[0] ?? 'signal'} visible while priorities change.`,
+    `Teams move faster because ${concreteFields[1] ?? 'updates'} stay structured.`,
   ];
 
   let i = 0;
@@ -152,18 +184,27 @@ function stripTrailingPeriod(text: string): string {
   return text.replace(/\.+$/, '');
 }
 
-function hasConcreteSignal(value: string): boolean {
-  return /\d/.test(value) || /(status|due|owner|assigned|priority|revenue|conversion|ticket|order|eta)/i.test(value);
+function hasConcreteSignal(value: string, fields: string[]): boolean {
+  const domainRegex = fields.length > 0
+    ? new RegExp(fields.map((f) => escapeRegex(f.toLowerCase())).join('|'), 'i')
+    : null;
+  const generic = /\d|status|due|owner|assigned|priority|revenue|conversion|ticket|order|eta/i.test(value);
+  return generic || Boolean(domainRegex && domainRegex.test(value.toLowerCase()));
 }
 
-function pickOwner(index: number): string {
-  return ['Maya', 'Jordan', 'Alex'][index % 3];
+function sampleValue(field: string, seed: number): string {
+  const key = field.toLowerCase();
+  const n = (seed % 5) + 1;
+  if (key.includes('patch')) return `14.${n}`;
+  if (key.includes('win')) return `${52 + n}.${n}%`;
+  if (key.includes('rank')) return `Top ${n * 100}`;
+  if (key.includes('conversion')) return `${2 + n * 0.4}%`;
+  if (key.includes('build')) return `Variant ${String.fromCharCode(64 + n)}`;
+  if (key.includes('engagement')) return `${5 + n * 0.9}%`;
+  if (key.includes('status')) return ['Ready', 'In Progress', 'Blocked'][seed % 3];
+  return `${field} ${n}`;
 }
 
-function pickStatus(index: number): string {
-  return ['In Progress', 'Blocked', 'Ready for Review'][index % 3];
-}
-
-function pickPriority(index: number): string {
-  return ['High', 'Medium', 'Critical'][index % 3];
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

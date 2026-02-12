@@ -16,19 +16,41 @@ export interface ScrapedData {
 }
 
 export async function scrapeUrl(url: string): Promise<ScrapedData> {
-  // Normalize URL
   if (!url.startsWith('http')) url = `https://${url}`;
-  const domain = new URL(url).hostname.replace('www.', '');
+  const primary = new URL(url);
+  const fetchCandidates = buildFetchCandidates(primary);
 
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-      'Accept': 'text/html,application/xhtml+xml',
-    },
-  });
+  let html = '';
+  let finalUrl = primary.toString();
+  let lastError = '';
 
-  if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
-  const html = await res.text();
+  for (const candidate of fetchCandidates) {
+    try {
+      const res = await fetch(candidate, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+        },
+      });
+
+      if (!res.ok) {
+        lastError = `Failed to fetch ${candidate}: ${res.status}`;
+        continue;
+      }
+
+      html = await res.text();
+      finalUrl = candidate;
+      break;
+    } catch (e: any) {
+      lastError = `Fetch error for ${candidate}: ${e.message}`;
+    }
+  }
+
+  if (!html) {
+    throw new Error(lastError || `Failed to fetch ${url}`);
+  }
+
+  const domain = new URL(finalUrl).hostname.replace('www.', '');
   const $ = cheerio.load(html);
 
   // Capture CSS before removing style tags.
@@ -62,15 +84,15 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
   });
 
   // Feature-like content from headings, list items, and lead paragraphs.
-  const candidates: string[] = [];
+  const textCandidates: string[] = [];
   $('h2, h3, li, p').each((_, el) => {
     const text = normalizeWhitespace($(el).text());
     if (!text) return;
-    candidates.push(text);
+    textCandidates.push(text);
   });
 
   const features: string[] = [];
-  for (const text of candidates) {
+  for (const text of textCandidates) {
     if (looksLikeFeature(text) && !features.includes(text)) {
       features.push(text);
     }
@@ -100,7 +122,7 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
   });
 
   return {
-    url,
+    url: finalUrl,
     title,
     description,
     ogTitle,
@@ -113,6 +135,34 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
     links: links.slice(0, 20),
     domain,
   };
+}
+
+function buildFetchCandidates(base: URL): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const host = base.hostname;
+  const path = `${base.pathname}${base.search}`;
+
+  const add = (candidate: string) => {
+    if (seen.has(candidate)) return;
+    seen.add(candidate);
+    out.push(candidate);
+  };
+
+  add(base.toString());
+  add(`https://${host}${path}`);
+  add(`http://${host}${path}`);
+
+  if (!host.startsWith('www.')) {
+    add(`https://www.${host}${path}`);
+    add(`http://www.${host}${path}`);
+  } else {
+    const naked = host.replace(/^www\./, '');
+    add(`https://${naked}${path}`);
+    add(`http://${naked}${path}`);
+  }
+
+  return out;
 }
 
 function normalizeWhitespace(value: string): string {

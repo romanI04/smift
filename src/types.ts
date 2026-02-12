@@ -18,6 +18,7 @@ export interface VideoProps {
   features: Feature[];
   integrations: string[];
   ctaUrl: string;
+  domainPackId?: string;
   audioSrc?: string;       // filename in public/ dir (e.g. 'voice.mp3')
   audioDurationMs?: number; // voice duration in ms, used to scale timeline
   // Per-scene timing weights derived from narration word counts.

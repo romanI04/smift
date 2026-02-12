@@ -6,6 +6,12 @@ import {scoreScriptQuality, toQualityFeedback, type QualityReport} from './quali
 import {buildFallbackScript} from './fallback-script';
 import {autoFixScriptQuality} from './autofix';
 import type {ScriptResult} from './script-types';
+import {
+  DOMAIN_PACK_IDS,
+  selectDomainPack,
+  type DomainPackId,
+  type DomainPackSelection,
+} from './domain-packs';
 import {bundle} from '@remotion/bundler';
 import {renderMedia, selectComposition} from '@remotion/renderer';
 import path from 'path';
@@ -18,6 +24,7 @@ dotenv.config({path: path.resolve(__dirname, '../../../../.env')});
 type VoiceEngine = 'elevenlabs' | 'openai' | 'chatterbox' | 'none';
 type QualityPreset = 'draft' | 'yc';
 type TemplateArg = 'auto' | TemplateId;
+type PackArg = 'auto' | DomainPackId;
 type VoiceMode = 'single' | 'segmented';
 type QualityMode = 'standard' | 'strict';
 type ManifestStatus = 'running' | 'completed' | 'failed';
@@ -44,6 +51,7 @@ async function run() {
   const voiceEngine = parseEnumArg<VoiceEngine>(args, '--voice', ['none', 'elevenlabs', 'openai', 'chatterbox']);
   const quality = parseEnumArg<QualityPreset>(args, '--quality', ['draft', 'yc']) ?? 'yc';
   const templateArg = parseEnumArg<TemplateArg>(args, '--template', ['auto', 'yc-saas', 'product-demo', 'founder-story']) ?? 'auto';
+  const packArg = parseEnumArg<PackArg>(args, '--pack', ['auto', ...DOMAIN_PACK_IDS] as PackArg[]) ?? 'auto';
   const voiceMode = parseEnumArg<VoiceMode>(args, '--voice-mode', ['single', 'segmented']) ?? 'single';
   const qualityMode = parseEnumArg<QualityMode>(args, '--quality-mode', ['standard', 'strict']) ?? 'standard';
   const minQuality = parseNumberArg(args, '--min-quality', 74);
@@ -58,7 +66,7 @@ async function run() {
   if (!url) {
     console.error(
       'Usage: npm run generate -- <url> [--voice=none|elevenlabs|openai|chatterbox] [--quality=draft|yc] ' +
-      '[--template=auto|yc-saas|product-demo|founder-story] [--voice-mode=single|segmented] ' +
+      '[--template=auto|yc-saas|product-demo|founder-story] [--pack=auto|<pack-id>] [--voice-mode=single|segmented] ' +
       '[--quality-mode=standard|strict] [--strict] [--max-warnings=3] [--min-quality=74] ' +
       '[--max-script-attempts=4] [--allow-low-quality] [--no-autofix] [--skip-render]',
     );
@@ -82,6 +90,7 @@ async function run() {
       voiceEngine: voiceEngine ?? 'auto',
       quality,
       template: templateArg,
+      pack: packArg,
       voiceMode,
       qualityMode: effectiveQualityMode,
       minQuality,
@@ -125,20 +134,28 @@ async function run() {
     console.log(`  -> ${scraped.title}`);
     console.log(`  -> ${scraped.headings.length} headings, ${scraped.features.length} features found`);
 
-    const templateSelection = selectTemplate(scraped, templateArg);
+    const domainPackSelection = selectDomainPack(scraped, packArg);
+    track('pack', 'Domain pack selected', {
+      id: domainPackSelection.pack.id,
+      reason: domainPackSelection.reason,
+    });
+    console.log(`  -> Domain pack: ${domainPackSelection.pack.id} (${domainPackSelection.reason})`);
+
+    const templateSelection = selectTemplate(scraped, templateArg, domainPackSelection.pack.id);
     track('template', 'Template selected', {id: templateSelection.profile.id, reason: templateSelection.reason});
     console.log(`  -> Template: ${templateSelection.profile.id} (${templateSelection.reason})`);
 
     console.log(`\n[2/5] Generating script with quality gate...`);
     const {script, qualityReport, generationMode} = await generateScriptWithQualityGate({
       scraped,
+      templateSelection,
+      domainPackSelection,
       minQuality,
       maxWarnings,
       qualityMode: effectiveQualityMode,
       maxScriptAttempts,
       allowLowQuality,
       autoFix,
-      templateArg,
     });
     track('script', 'Script generated', {
       score: qualityReport.score,
@@ -173,10 +190,12 @@ async function run() {
         {
           generatedAt: new Date().toISOString(),
           url,
-          template: templateSelection.profile.id,
-          templateReason: templateSelection.reason,
-          generationMode,
-          qualityReport,
+        template: templateSelection.profile.id,
+        templateReason: templateSelection.reason,
+        domainPack: domainPackSelection.pack.id,
+        domainPackReason: domainPackSelection.reason,
+        generationMode,
+        qualityReport,
         },
         null,
         2,
@@ -302,16 +321,26 @@ async function run() {
 
 async function generateScriptWithQualityGate(args: {
   scraped: Awaited<ReturnType<typeof scrapeUrl>>;
+  templateSelection: ReturnType<typeof selectTemplate>;
+  domainPackSelection: DomainPackSelection;
   minQuality: number;
   maxWarnings: number;
   qualityMode: QualityMode;
   maxScriptAttempts: number;
   allowLowQuality: boolean;
   autoFix: boolean;
-  templateArg: TemplateArg;
 }): Promise<{script: ScriptResult; qualityReport: QualityReport; generationMode: 'model' | 'model+autofix' | 'fallback' | 'fallback+autofix'}> {
-  const {scraped, minQuality, maxWarnings, qualityMode, maxScriptAttempts, allowLowQuality, autoFix, templateArg} = args;
-  const templateSelection = selectTemplate(scraped, templateArg);
+  const {
+    scraped,
+    templateSelection,
+    domainPackSelection,
+    minQuality,
+    maxWarnings,
+    qualityMode,
+    maxScriptAttempts,
+    allowLowQuality,
+    autoFix,
+  } = args;
   const failOnWarnings = qualityMode === 'strict';
 
   let latestReport: QualityReport | null = null;
@@ -322,9 +351,11 @@ async function generateScriptWithQualityGate(args: {
     try {
       candidate = await generateScript(scraped, {
         templateProfile: templateSelection.profile,
+        domainPack: domainPackSelection.pack,
         qualityFeedback,
         maxRetries: 3,
       });
+      candidate.domainPackId = domainPackSelection.pack.id;
     } catch (e: any) {
       console.warn(`  -> Attempt ${attempt}/${maxScriptAttempts} model generation failed: ${e.message}`);
       qualityFeedback = [`Model generation error: ${e.message}`];
@@ -337,6 +368,7 @@ async function generateScriptWithQualityGate(args: {
       script: candidate,
       scraped,
       template: templateSelection.profile,
+      domainPack: domainPackSelection.pack,
       minScore: minQuality,
       maxWarnings,
       failOnWarnings,
@@ -347,14 +379,14 @@ async function generateScriptWithQualityGate(args: {
 
     if (report.passed) {
       return {
-        script: candidate,
+        script: {...candidate, domainPackId: domainPackSelection.pack.id},
         qualityReport: report,
         generationMode: 'model',
       };
     }
 
     if (autoFix) {
-      const fixed = autoFixScriptQuality(candidate, scraped);
+      const fixed = autoFixScriptQuality(candidate, scraped, domainPackSelection.pack);
       if (fixed.actions.length > 0) {
         console.log(`  -> Auto-fix applied: ${fixed.actions.join(' | ')}`);
       }
@@ -362,6 +394,7 @@ async function generateScriptWithQualityGate(args: {
         script: fixed.script,
         scraped,
         template: templateSelection.profile,
+        domainPack: domainPackSelection.pack,
         minScore: minQuality,
         maxWarnings,
         failOnWarnings,
@@ -369,7 +402,7 @@ async function generateScriptWithQualityGate(args: {
       console.log(`  -> Auto-fix quality ${fixedReport.score}/${minQuality}`);
       if (fixedReport.passed) {
         return {
-          script: fixed.script,
+          script: {...fixed.script, domainPackId: domainPackSelection.pack.id},
           qualityReport: fixedReport,
           generationMode: 'model+autofix',
         };
@@ -383,18 +416,19 @@ async function generateScriptWithQualityGate(args: {
   }
 
   console.warn('  -> Model script did not pass quality gate, switching to deterministic fallback');
-  const fallback = buildFallbackScript(scraped, templateSelection.profile);
+  const fallback = buildFallbackScript(scraped, templateSelection.profile, domainPackSelection.pack);
   const fallbackReport = scoreScriptQuality({
     script: fallback,
     scraped,
     template: templateSelection.profile,
+    domainPack: domainPackSelection.pack,
     minScore: minQuality,
     maxWarnings,
     failOnWarnings,
   });
 
   if (autoFix && !fallbackReport.passed) {
-    const fixedFallback = autoFixScriptQuality(fallback, scraped);
+    const fixedFallback = autoFixScriptQuality(fallback, scraped, domainPackSelection.pack);
     if (fixedFallback.actions.length > 0) {
       console.log(`  -> Fallback auto-fix applied: ${fixedFallback.actions.join(' | ')}`);
     }
@@ -402,13 +436,14 @@ async function generateScriptWithQualityGate(args: {
       script: fixedFallback.script,
       scraped,
       template: templateSelection.profile,
+      domainPack: domainPackSelection.pack,
       minScore: minQuality,
       maxWarnings,
       failOnWarnings,
     });
     if (fixedFallbackReport.passed || allowLowQuality) {
       return {
-        script: fixedFallback.script,
+        script: {...fixedFallback.script, domainPackId: domainPackSelection.pack.id},
         qualityReport: fixedFallbackReport,
         generationMode: 'fallback+autofix',
       };
@@ -428,7 +463,7 @@ async function generateScriptWithQualityGate(args: {
   }
 
   return {
-    script: fallback,
+    script: {...fallback, domainPackId: domainPackSelection.pack.id},
     qualityReport: fallbackReport,
     generationMode: 'fallback',
   };

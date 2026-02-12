@@ -99,22 +99,19 @@ const AnalyticsMockup: React.FC<{lines: string[]; charsToShow: number; accentCol
 }) => {
   const allText = lines.join('\n');
   const visibleText = allText.slice(0, charsToShow);
-  const splitLines = visibleText.split('\n').filter(l => l.trim());
+  const splitLines = visibleText.split('\n').map((line) => line.trim()).filter(Boolean);
+  const {title, periodLabel, metrics, detailLines} = buildAnalyticsContent(splitLines, accentColor);
 
   return (
     <div style={{...makeCardStyle(accentColor), backgroundColor: 'white'}}>
       <div style={{padding: '16px 20px', borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-        <span style={{fontSize: 15, fontWeight: 600, color: '#111', fontFamily: FONT_DISPLAY}}>Dashboard</span>
+        <span style={{fontSize: 15, fontWeight: 600, color: '#111', fontFamily: FONT_DISPLAY}}>{title}</span>
         <div style={{padding: '4px 12px', backgroundColor: '#f5f5f5', borderRadius: 6}}>
-          <span style={{fontSize: 12, color: '#666', fontFamily: FONT_BODY}}>Last 30 days</span>
+          <span style={{fontSize: 12, color: '#666', fontFamily: FONT_BODY}}>{periodLabel}</span>
         </div>
       </div>
       <div style={{padding: '14px 20px', display: 'flex', gap: 12}}>
-        {[
-          {label: 'Active', value: '2,847', change: '+12%', color: '#22C55E'},
-          {label: 'Revenue', value: '$48.2k', change: '+8%', color: '#22C55E'},
-          {label: 'Issues', value: '23', change: '-15%', color: accentColor},
-        ].map(({label, value, change, color}, i) => (
+        {metrics.map(({label, value, change, color}, i) => (
           <div key={i} style={{flex: 1, padding: '12px 14px', backgroundColor: '#FAFAFA', borderRadius: 10}}>
             <span style={{fontSize: 11, color: '#888', display: 'block', fontFamily: FONT_BODY}}>{label}</span>
             <span style={{fontSize: 22, fontWeight: 700, color: '#111', display: 'block', marginTop: 2, fontFamily: FONT_DISPLAY}}>{value}</span>
@@ -123,8 +120,8 @@ const AnalyticsMockup: React.FC<{lines: string[]; charsToShow: number; accentCol
         ))}
       </div>
       <div style={{padding: '8px 20px 16px'}}>
-        {splitLines.map((line, i) => (
-          <div key={i} style={{padding: '10px 0', borderBottom: i < splitLines.length - 1 ? '1px solid #f0f0f0' : 'none', display: 'flex', alignItems: 'center', gap: 10}}>
+        {detailLines.map((line, i) => (
+          <div key={i} style={{padding: '10px 0', borderBottom: i < detailLines.length - 1 ? '1px solid #f0f0f0' : 'none', display: 'flex', alignItems: 'center', gap: 10}}>
             <div style={{width: 8, height: 8, borderRadius: 4, backgroundColor: i === 0 ? accentColor : i === 1 ? '#22C55E' : '#F59E0B'}} />
             <span style={{fontSize: 13, color: '#333', fontFamily: FONT_BODY}}>{line}</span>
           </div>
@@ -133,6 +130,99 @@ const AnalyticsMockup: React.FC<{lines: string[]; charsToShow: number; accentCol
     </div>
   );
 };
+
+function buildAnalyticsContent(lines: string[], accentColor: string): {
+  title: string;
+  periodLabel: string;
+  metrics: Array<{label: string; value: string; change: string; color: string}>;
+  detailLines: string[];
+} {
+  const metrics: Array<{label: string; value: string; change: string; color: string}> = [];
+  const detailLines: string[] = [];
+
+  for (const line of lines) {
+    if (metrics.length < 3) {
+      const parsed = parseMetricLine(line, metrics.length, accentColor);
+      if (parsed) {
+        metrics.push(parsed);
+        continue;
+      }
+    }
+    detailLines.push(line);
+  }
+
+  while (metrics.length < 3) {
+    const idx = metrics.length;
+    metrics.push({
+      label: ['Signal', 'Trend', 'Focus'][idx] || `Metric ${idx + 1}`,
+      value: ['Live', 'Stable', 'Up'][idx] || 'Ready',
+      change: idx === 2 ? '-2%' : `+${4 + idx}%`,
+      color: idx === 2 ? accentColor : '#22C55E',
+    });
+  }
+
+  const title = pickTitle(detailLines, lines);
+  const periodLabel = pickPeriod(lines);
+  const normalizedDetails = detailLines.length > 0 ? detailLines.slice(0, 4) : ['Track key updates and act quickly.'];
+
+  return {title, periodLabel, metrics, detailLines: normalizedDetails};
+}
+
+function parseMetricLine(
+  line: string,
+  index: number,
+  accentColor: string,
+): {label: string; value: string; change: string; color: string} | null {
+  const colon = line.match(/^([A-Za-z][A-Za-z0-9\s/-]{1,24}):\s*(.+)$/);
+  if (colon) {
+    const label = toLabel(colon[1]);
+    const value = colon[2].trim();
+    const up = !/down|drop|blocked|risk|late|behind/i.test(value);
+    return {
+      label,
+      value: toValue(value),
+      change: up ? `+${5 + index}%` : `-${2 + index}%`,
+      color: up ? '#22C55E' : accentColor,
+    };
+  }
+
+  const inline = line.match(/^([A-Za-z][A-Za-z0-9\s/-]{1,20})\s+([\$]?\d[\d.,]*%?|Top \d+|Patch \d+\.\d+)$/i);
+  if (inline) {
+    const label = toLabel(inline[1]);
+    const value = inline[2].trim();
+    return {
+      label,
+      value,
+      change: `+${4 + index}%`,
+      color: '#22C55E',
+    };
+  }
+
+  return null;
+}
+
+function pickTitle(detailLines: string[], allLines: string[]): string {
+  const candidate = [...detailLines, ...allLines].find((line) => line.length > 4 && line.length <= 34 && !line.includes(':'));
+  return candidate ? toLabel(candidate) : 'Performance Signals';
+}
+
+function pickPeriod(lines: string[]): string {
+  const joined = lines.join(' ').toLowerCase();
+  if (joined.includes('patch')) return 'Current patch';
+  if (joined.includes('week')) return 'This week';
+  if (joined.includes('today')) return 'Today';
+  return 'Latest cycle';
+}
+
+function toLabel(raw: string): string {
+  const clean = raw.trim().replace(/[_-]+/g, ' ');
+  return clean.length > 24 ? clean.slice(0, 24).trim() : clean;
+}
+
+function toValue(raw: string): string {
+  const clean = raw.trim();
+  return clean.length > 12 ? `${clean.slice(0, 12)}...` : clean;
+}
 
 const ChatMockup: React.FC<{lines: string[]; charsToShow: number; accentColor: string}> = ({
   lines, charsToShow, accentColor,

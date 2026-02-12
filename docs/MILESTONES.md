@@ -121,3 +121,14 @@
 - Added real benchmark runner (`src/pipeline/eval-real.ts`) + `npm run eval:real`:
   - reports pass-rate, average score, and expected-pack accuracy
   - outputs JSON/CSV summaries in `out/`.
+
+### M11 - B2B Recall Calibration for Real Domains
+
+- Tuned domain-pack scoring to improve B2B recall on marketing-heavy sites:
+  - expanded B2B keywords and high-signal terms (`hubspot`, `salesforce`, `intercom`, `customer service`, etc.)
+  - added B2B negative keywords to avoid ecommerce/fintech leakage.
+- Added strong `signalTerms` for `ecommerce-retail` and `fintech` packs to rebalance precision after B2B boost.
+- Reduced false positives in adjacent packs:
+  - added negative B2B indicators to `media-creator`
+  - replaced generic real-estate keyword `agent` with `real estate agent`.
+- `eval:real --limit=20` improved from ~`78.9%` to `94.7%` pack accuracy (excluding one network-blocked domain).

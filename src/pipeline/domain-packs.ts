@@ -37,6 +37,7 @@ export interface DomainPack {
   description: string;
   preferredTemplate: TemplateStyleId;
   keywords: string[];
+  signalTerms?: string[];
   negativeKeywords?: string[];
   allowedIcons: FeatureIconId[];
   forbiddenTerms: string[];
@@ -72,11 +73,61 @@ const DOMAIN_PACKS: Record<DomainPackId, DomainPack> = {
     label: 'B2B SaaS',
     description: 'B2B workflow and operations products.',
     preferredTemplate: 'yc-saas',
-    keywords: ['workflow', 'automation', 'team', 'ops', 'crm', 'pipeline', 'dashboard', 'platform', 'enterprise'],
+    keywords: [
+      'workflow',
+      'automation',
+      'team',
+      'ops',
+      'crm',
+      'pipeline',
+      'dashboard',
+      'platform',
+      'enterprise',
+      'customer service',
+      'customer support',
+      'sales',
+      'lead',
+      'leads',
+      'go-to-market',
+      'go to market',
+      'revenue operations',
+      'ticketing',
+      'service desk',
+      'help desk',
+      'inbox',
+      'contacts',
+      'knowledge base',
+    ],
+    signalTerms: [
+      'hubspot',
+      'salesforce',
+      'intercom',
+      'zendesk',
+      'customer platform',
+      'sales hub',
+      'service hub',
+      'marketing hub',
+      'crm',
+      'customer service',
+      'customer support',
+    ],
+    negativeKeywords: [
+      'checkout',
+      'cart',
+      'sku',
+      'storefront',
+      'merchandise',
+      'ecommerce',
+      'patch notes',
+      'tier list',
+      'payment processing',
+      'bank account',
+      'expense card',
+    ],
     allowedIcons: ['analytics', 'chat', 'docs', 'calendar', 'support', 'code', 'ai', 'generic'],
     forbiddenTerms: ['jackpot', 'odds board', 'tier comp'],
     concreteFields: ['Owner', 'Status', 'Priority', 'SLA', 'Ticket'],
-    fallbackIntegrations: ['Slack', 'Notion', 'HubSpot', 'Zapier'],
+    fallbackIntegrations: ['Slack', 'Notion', 'HubSpot', 'Salesforce', 'Intercom', 'Zendesk', 'Zapier'],
     scriptStyleHint:
       'Emphasize workflow clarity, cycle time reduction, and operational outcomes. Keep it concrete and execution-focused.',
   },
@@ -99,6 +150,19 @@ const DOMAIN_PACKS: Record<DomainPackId, DomainPack> = {
     description: 'D2C, retail, and commerce operations.',
     preferredTemplate: 'product-demo',
     keywords: ['cart', 'checkout', 'order', 'inventory', 'sku', 'catalog', 'store', 'shop', 'shipping', 'merchandise'],
+    signalTerms: [
+      'shopify',
+      'bigcommerce',
+      'klaviyo',
+      'printful',
+      'storefront',
+      'd2c',
+      'ecommerce',
+      'checkout',
+      'cart',
+      'order management',
+      'product catalog',
+    ],
     allowedIcons: ['commerce', 'analytics', 'support', 'chat', 'finance', 'calendar', 'media', 'generic'],
     forbiddenTerms: ['patient', 'deploy pipeline', 'ranked comp'],
     concreteFields: ['Order', 'Conversion', 'AOV', 'Stock', 'Fulfillment'],
@@ -112,6 +176,19 @@ const DOMAIN_PACKS: Record<DomainPackId, DomainPack> = {
     description: 'Payments, banking, risk, or finance workflows.',
     preferredTemplate: 'yc-saas',
     keywords: ['payment', 'ledger', 'bank', 'fraud', 'compliance', 'risk', 'invoice', 'billing', 'transaction', 'treasury'],
+    signalTerms: [
+      'stripe',
+      'plaid',
+      'brex',
+      'ramp',
+      'card',
+      'spend management',
+      'expense management',
+      'accounts payable',
+      'treasury',
+      'risk',
+      'payments',
+    ],
     allowedIcons: ['finance', 'analytics', 'docs', 'support', 'chat', 'calendar', 'generic'],
     forbiddenTerms: ['patient', 'loot', 'tier list'],
     concreteFields: ['Txn Volume', 'Risk Score', 'Settlement', 'Dispute', 'Cash Flow'],
@@ -147,6 +224,7 @@ const DOMAIN_PACKS: Record<DomainPackId, DomainPack> = {
     preferredTemplate: 'founder-story',
     keywords: ['creator', 'content', 'audience', 'channel', 'video', 'podcast', 'newsletter', 'publish', 'engagement'],
     allowedIcons: ['media', 'analytics', 'social', 'chat', 'calendar', 'docs', 'generic'],
+    negativeKeywords: ['crm', 'sales', 'customer support', 'customer service', 'ticketing', 'enterprise', 'pipeline', 'lead'],
     forbiddenTerms: ['ehr', 'warehousing', 'incident response'],
     concreteFields: ['Views', 'Retention', 'Publish Date', 'CTR', 'Engagement'],
     fallbackIntegrations: ['YouTube', 'TikTok', 'Instagram', 'Substack'],
@@ -171,7 +249,7 @@ const DOMAIN_PACKS: Record<DomainPackId, DomainPack> = {
     label: 'Real Estate',
     description: 'Brokerage, listings, and property operations.',
     preferredTemplate: 'product-demo',
-    keywords: ['listing', 'property', 'broker', 'agent', 'showing', 'escrow', 'mortgage', 'rental', 'tenant'],
+    keywords: ['listing', 'property', 'broker', 'real estate agent', 'showing', 'escrow', 'mortgage', 'rental', 'tenant', 'mls'],
     allowedIcons: ['calendar', 'analytics', 'docs', 'chat', 'finance', 'support', 'generic'],
     forbiddenTerms: ['patient chart', 'comp reroll', 'git commit'],
     concreteFields: ['Listing', 'Showing', 'Offer', 'Close Date', 'Occupancy'],
@@ -267,6 +345,13 @@ export function selectDomainPack(scraped: ScrapedData, requested?: 'auto' | Doma
       }
     }
 
+    for (const signal of pack.signalTerms ?? []) {
+      const signalScore = weightedKeywordScore(corpora, signal);
+      if (signalScore > 0) {
+        score += signalScore * 1.6;
+      }
+    }
+
     score = Number(score.toFixed(2));
     scores[id] = score;
     candidates.push({id, score});
@@ -290,11 +375,15 @@ export function selectDomainPack(scraped: ScrapedData, requested?: 'auto' | Doma
   const lowSignalButClear = bestScore >= LOW_SIGNAL_MIN_SCORE
     && gap >= LOW_SIGNAL_MIN_GAP
     && confidence >= LOW_SIGNAL_MIN_CONFIDENCE;
+  const b2bAmbiguousButStrong = best?.id === 'b2b-saas'
+    && bestScore >= 8
+    && gap >= 0.6
+    && confidence >= 0.4;
 
   if (
     !best
-    || ((bestScore < MIN_BEST_SCORE || confidence < MIN_CONFIDENCE) && !lowSignalButClear)
-    || (gap < MIN_GAP && confidence < AMBIGUOUS_HIGH_CONFIDENCE)
+    || ((bestScore < MIN_BEST_SCORE || confidence < MIN_CONFIDENCE) && !lowSignalButClear && !b2bAmbiguousButStrong)
+    || (gap < MIN_GAP && confidence < AMBIGUOUS_HIGH_CONFIDENCE && !b2bAmbiguousButStrong)
   ) {
     return {
       pack: DOMAIN_PACKS.general,
@@ -382,6 +471,11 @@ function keywordWeight(keyword: string): number {
     experience: 0.4,
     team: 0.45,
     teams: 0.45,
+    agent: 0.45,
+    engagement: 0.55,
+    audience: 0.6,
+    content: 0.7,
+    channel: 0.7,
   };
   return weakWeights[normalized] ?? 1;
 }

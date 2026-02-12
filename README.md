@@ -56,6 +56,7 @@ Generated artifacts land in `out/`:
 - Domain packs are selected automatically from scraped copy (`--pack=auto`) or forced via `--pack=<id>`.
 - Pack selection drives template default, icon constraints, forbidden terms, concrete on-screen fields, and fallback integrations.
 - Auto-selection now uses weighted field scoring (domain/title/headings/features/body/links) plus confidence+gap gating.
+- Pack scoring supports high-confidence signal terms per domain family (used for better real-world recall on sparse/marketing pages).
 - Scraper contributes `structuredHints` from JSON-LD metadata when available.
 - Feature scenes now use pack-aware visual layouts (terminal/ledger/commerce/leaderboard/timeline/feed) instead of one generic mockup style.
 - Pack metadata is defined in `src/pipeline/domain-packs.ts`.

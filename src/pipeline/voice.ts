@@ -35,8 +35,10 @@ export async function generateVoice(
 }
 
 function detectEngine(): Engine {
-  // Chatterbox is the best quality and free — default choice
-  // Use --voice=elevenlabs or --voice=openai to override
+  // Chatterbox is best quality + free, but HuggingFace Spaces can go down.
+  // ElevenLabs as reliable fallback if key available.
+  if (process.env.eleven_labs_api_key) return 'elevenlabs';
+  if (process.env.openai_api_key) return 'openai';
   return 'chatterbox';
 }
 

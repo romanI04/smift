@@ -19,10 +19,9 @@ export const RemotionRoot: React.FC = () => {
         defaultProps={voiceosData}
         calculateMetadata={async ({props}: {props: VideoProps}) => {
           if (props.audioDurationMs) {
-            // Voice starts after BrandReveal (~2s = 60 frames)
-            // Add 5s closing after voice ends
+            // Voice starts ~0.5s in, then plays, then 2.5s closing hold
             const voiceFrames = Math.ceil((props.audioDurationMs / 1000) * FPS);
-            const totalFrames = 60 + voiceFrames + 150;
+            const totalFrames = 15 + voiceFrames + 75;
             return {durationInFrames: totalFrames};
           }
           return {durationInFrames: FALLBACK_DURATION};

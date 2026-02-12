@@ -1,6 +1,14 @@
 import type {ScriptResult} from './script-types';
 import type {ScrapedData} from './scraper';
 import type {DomainPack} from './domain-packs';
+import {
+  extractGroundingHints,
+  hasGroundingSignal,
+  pickGroundedIntegration,
+  pickGroundedNumber,
+  pickGroundedPhrase,
+  type GroundingHints,
+} from './grounding';
 
 export interface AutoFixResult {
   script: ScriptResult;
@@ -11,7 +19,9 @@ export function autoFixScriptQuality(
   script: ScriptResult,
   scraped: ScrapedData,
   domainPack: DomainPack,
+  groundingHintsArg?: GroundingHints,
 ): AutoFixResult {
+  const groundingHints = groundingHintsArg ?? extractGroundingHints(scraped);
   const next: ScriptResult = {
     ...script,
     features: script.features.map((feature) => ({...feature, demoLines: [...feature.demoLines]})),
@@ -76,6 +86,15 @@ export function autoFixScriptQuality(
       actions.push(`Injected pack-specific concrete fields for feature ${idx + 1}.`);
     }
 
+    if (!hasGroundingSignal(updated.demoLines.join(' '), groundingHints)) {
+      const groundedPhrase = pickGroundedPhrase(groundingHints, idx);
+      const groundedNumber = pickGroundedNumber(groundingHints, idx);
+      if (groundedPhrase) {
+        updated.demoLines.push(groundedNumber ? `${groundedPhrase}: ${groundedNumber}` : groundedPhrase);
+        actions.push(`Injected grounded source phrase for feature ${idx + 1}.`);
+      }
+    }
+
     updated.demoLines = updated.demoLines.map((line) => {
       let sanitized = line;
       for (const regex of forbiddenRegexes) {
@@ -100,11 +119,34 @@ export function autoFixScriptQuality(
     actions.push('Filled missing integrations using domain pack defaults.');
   }
 
+  if (next.integrations.length < 4) {
+    for (let i = 0; i < 4; i++) {
+      const groundedIntegration = pickGroundedIntegration(groundingHints, i);
+      if (!groundedIntegration) break;
+      if (!next.integrations.some((item) => item.toLowerCase() === groundedIntegration.toLowerCase())) {
+        next.integrations.push(groundedIntegration);
+        actions.push(`Added grounded integration "${groundedIntegration}".`);
+      }
+      if (next.integrations.length >= 6) break;
+    }
+  }
+
   if (next.integrations.length > 12) {
     next.integrations = next.integrations.slice(0, 12);
     actions.push('Trimmed integrations to 12 items.');
   }
 
+  next.narrationSegments = normalizeNarrationWordCount(next.narrationSegments, domainPack.concreteFields);
+  for (let i = 3; i <= 6; i++) {
+    if (!next.narrationSegments[i]) continue;
+    if (!hasGroundingSignal(next.narrationSegments[i], groundingHints)) {
+      const groundedPhrase = pickGroundedPhrase(groundingHints, i);
+      if (groundedPhrase) {
+        next.narrationSegments[i] = `${next.narrationSegments[i]} ${groundedPhrase}.`.trim();
+        actions.push(`Grounded narration segment ${i + 1}.`);
+      }
+    }
+  }
   next.narrationSegments = normalizeNarrationWordCount(next.narrationSegments, domainPack.concreteFields);
   next.narrationSegments = next.narrationSegments.map((segment) => {
     let sanitized = segment;

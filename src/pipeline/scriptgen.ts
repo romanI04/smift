@@ -3,6 +3,14 @@ import type {ScrapedData} from './scraper';
 import type {ScriptResult} from './script-types';
 import type {TemplateProfile} from './templates';
 import type {DomainPack} from './domain-packs';
+import {
+  extractGroundingHints,
+  hasGroundingSignal,
+  pickGroundedIntegration,
+  pickGroundedNumber,
+  pickGroundedPhrase,
+  type GroundingHints,
+} from './grounding';
 
 const BASE_SYSTEM_PROMPT = `You are a senior launch-video script writer.
 Given scraped website data, generate structured script JSON for a 35-45 second intro video.
@@ -53,6 +61,7 @@ Rules:
 export interface GenerateScriptOptions {
   templateProfile?: TemplateProfile;
   domainPack?: DomainPack;
+  groundingHints?: GroundingHints;
   qualityFeedback?: string[];
   maxRetries?: number;
 }
@@ -66,6 +75,7 @@ export async function generateScript(
 
   const client = new OpenAI({apiKey});
   const maxRetries = options.maxRetries ?? 3;
+  const groundingHints = options.groundingHints ?? extractGroundingHints(scraped);
 
   let parsed: any = null;
   let lastError = 'Unknown script generation error';
@@ -91,9 +101,12 @@ export async function generateScript(
     }
 
     try {
-      const candidate = JSON.parse(content);
+      let candidate = JSON.parse(content);
       validateParsedScript(candidate);
 
+      candidate.narrationSegments = enforceNarrationWordRange(candidate.narrationSegments, options.domainPack);
+      const groundingFix = enforceGrounding(candidate, groundingHints);
+      candidate = groundingFix;
       candidate.narrationSegments = enforceNarrationWordRange(candidate.narrationSegments, options.domainPack);
       const words = countWords(candidate.narrationSegments.join(' '));
       if (words < 100 || words > 140) {
@@ -157,6 +170,7 @@ function buildUserPrompt(
   options: GenerateScriptOptions,
   attempt: number,
 ): string {
+  const groundingHints = options.groundingHints ?? extractGroundingHints(scraped);
   const feedbackBlock = (options.qualityFeedback && options.qualityFeedback.length > 0)
     ? `\nPrevious quality issues to fix:\n- ${options.qualityFeedback.join('\n- ')}`
     : '';
@@ -172,6 +186,13 @@ Allowed icons: ${options.domainPack.allowedIcons.join(', ')}
 Forbidden terms: ${options.domainPack.forbiddenTerms.join(', ') || 'none'}
 Concrete fields to include in demo lines: ${options.domainPack.concreteFields.join(', ') || 'Status, Result'}`
     : '';
+
+  const groundingBlock = `\nGrounding lexicon (use exact or very close terms):
+Terms: ${groundingHints.terms.slice(0, 18).join(', ') || 'none'}
+Phrases: ${groundingHints.phrases.slice(0, 10).join(' | ') || 'none'}
+Numbers: ${groundingHints.numbers.slice(0, 8).join(', ') || 'none'}
+Integrations seen in source: ${groundingHints.integrationCandidates.slice(0, 8).join(', ') || 'none'}
+Hard requirement: features and narration must be grounded in this source lexicon; do not invent unrelated product nouns.`;
 
   return `Generate a script for this product:\n
 URL: ${scraped.url}
@@ -191,7 +212,9 @@ Body excerpt:
 ${scraped.bodyText.slice(0, 2200)}
 
 Colors found: ${scraped.colors.join(', ')}
+Structured hints: ${(scraped.structuredHints ?? []).join(', ')}
 ${packBlock}
+${groundingBlock}
 ${feedbackBlock}
 ${retryBlock}`;
 }
@@ -271,4 +294,99 @@ function buildBoosters(domainPack?: DomainPack): string[] {
 
 function countWords(value: string): number {
   return value.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function enforceGrounding(candidate: any, groundingHints: GroundingHints): any {
+  const next = {
+    ...candidate,
+    features: Array.isArray(candidate.features) ? candidate.features.map((feature: any) => ({...feature, demoLines: [...(feature.demoLines ?? [])]})) : [],
+    integrations: Array.isArray(candidate.integrations) ? [...candidate.integrations] : [],
+    narrationSegments: Array.isArray(candidate.narrationSegments) ? [...candidate.narrationSegments] : [],
+  };
+
+  const usedNames = new Set<string>();
+
+  for (let i = 0; i < next.features.length; i++) {
+    const feature = next.features[i];
+    const phrase = pickGroundedPhrase(groundingHints, i);
+    const num = pickGroundedNumber(groundingHints, i);
+
+    if (!feature?.appName) {
+      feature.appName = phrase ? toAppLabel(phrase) : `Feature ${i + 1}`;
+    }
+
+    if (feature?.appName && !hasGroundingSignal(feature.appName, groundingHints) && phrase) {
+      feature.appName = toAppLabel(phrase);
+    }
+
+    feature.appName = toAppLabel(feature.appName);
+    const dedupeKey = feature.appName.toLowerCase();
+    if (usedNames.has(dedupeKey)) {
+      const fallback = phrase ? toAppLabel(phrase) : `Feature ${i + 1}`;
+      feature.appName = `${fallback} ${i + 1}`.trim();
+    }
+    usedNames.add(feature.appName.toLowerCase());
+
+    const joined = (feature?.demoLines ?? []).join(' ');
+    if (!hasGroundingSignal(joined, groundingHints)) {
+      const groundedLine = phrase ?? feature?.appName ?? `Signal ${i + 1}`;
+      if (num) {
+        feature.demoLines.push(`${groundedLine}: ${num}`);
+      } else {
+        feature.demoLines.push(groundedLine);
+      }
+    }
+  }
+
+  if (next.integrations.length < 2) {
+    for (let i = next.integrations.length; i < 2; i++) {
+      const integration = pickGroundedIntegration(groundingHints, i);
+      if (!integration) break;
+      if (!next.integrations.some((item: string) => item.toLowerCase() === integration.toLowerCase())) {
+        next.integrations.push(integration);
+      }
+    }
+  }
+
+  for (let i = 3; i <= 6; i++) {
+    if (!next.narrationSegments[i]) continue;
+    if (!hasGroundingSignal(next.narrationSegments[i], groundingHints)) {
+      const phrase = pickGroundedPhrase(groundingHints, i);
+      if (phrase) {
+        next.narrationSegments[i] = `${next.narrationSegments[i]} ${phrase}.`.trim();
+      }
+    }
+  }
+
+  return next;
+}
+
+function toMaxWords(text: string, maxWords: number): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return text.trim();
+  return words.slice(0, maxWords).join(' ');
+}
+
+function titleCase(value: string): string {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function toAppLabel(value: string): string {
+  const blocked = new Set([
+    'the', 'and', 'for', 'with', 'from', 'this', 'that', 'your', 'you', 'our', 'into', 'one',
+    'they', 'their', 'there', 'behind', 'across', 'every', 'next', 'nextbig', 'best',
+  ]);
+  const tokens = value
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .filter((token) => token.length >= 3 && !blocked.has(token.toLowerCase()))
+    .slice(0, 3);
+  if (tokens.length === 0) return 'Core Feature';
+  return titleCase(tokens.join(' '));
 }

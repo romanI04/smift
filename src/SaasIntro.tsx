@@ -156,6 +156,7 @@ export const SaasIntro: React.FC<VideoProps> = (props) => {
                 feature={props.features[0]}
                 brandColor={props.brandColor}
                 accentColor={props.accentColor}
+                domainPackId={props.domainPackId}
               />
             </SceneMotion>
           </TransitionSeries.Sequence>
@@ -171,6 +172,7 @@ export const SaasIntro: React.FC<VideoProps> = (props) => {
                 feature={props.features[1]}
                 brandColor={props.brandColor}
                 accentColor={props.accentColor}
+                domainPackId={props.domainPackId}
               />
             </SceneMotion>
           </TransitionSeries.Sequence>
@@ -186,6 +188,7 @@ export const SaasIntro: React.FC<VideoProps> = (props) => {
                 feature={props.features[2]}
                 brandColor={props.brandColor}
                 accentColor={props.accentColor}
+                domainPackId={props.domainPackId}
               />
             </SceneMotion>
           </TransitionSeries.Sequence>

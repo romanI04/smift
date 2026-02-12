@@ -55,9 +55,16 @@ Generated artifacts land in `out/`:
 - Pack selection drives template default, icon constraints, forbidden terms, concrete on-screen fields, and fallback integrations.
 - Auto-selection now uses weighted field scoring (domain/title/headings/features/body/links) plus confidence+gap gating.
 - Scraper contributes `structuredHints` from JSON-LD metadata when available.
+- Feature scenes now use pack-aware visual layouts (terminal/ledger/commerce/leaderboard/timeline/feed) instead of one generic mockup style.
 - Pack metadata is defined in `src/pipeline/domain-packs.ts`.
 - Quality report includes `domainPack` and `domainPackReason` for traceability.
 - Quality report also includes `domainPackConfidence`, `domainPackTopCandidates`, and `domainPackScores`.
+
+## Grounding
+
+- The pipeline extracts source grounding hints (`terms`, `phrases`, `numbers`, `integrationCandidates`) from scraped content.
+- Script generation prompt and post-processing use grounding hints to reduce off-domain wording.
+- Quality report includes a `grounding` block with coverage and match stats so relevance is auditable per run.
 
 ## Docs
 

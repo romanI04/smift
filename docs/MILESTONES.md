@@ -73,3 +73,22 @@
 - Job payload now includes parsed quality summary:
   - `score`, `passed`, `generationMode`, `domainPack`, `domainPackConfidence`.
 - This enables lightweight queue polling and triage without consuming full script artifacts.
+
+### M8 - Grounded Generation + Pack Visual Systems
+
+- Added grounding extraction module (`src/pipeline/grounding.ts`) to derive:
+  - source terms
+  - source phrases
+  - source numbers
+  - integration candidates
+- Wired grounding into generation flow:
+  - script prompt now includes grounding lexicon constraints.
+  - model output is post-processed to enforce grounded feature/demo/narration text.
+  - fallback and autofix now inject grounded phrases/numbers where needed.
+- Added grounding-aware quality scoring and artifact reporting:
+  - quality scorer now evaluates grounding coverage and numeric signal usage.
+  - `out/<name>-quality.json` now contains a `grounding` summary block.
+- Implemented pack-aware visual systems in feature scenes:
+  - `FeatureDemo` now uses domain-driven layout variants (`terminal`, `commerce`, `ledger`, `leaderboard`, `timeline`, `feed`, `default`).
+  - scene background, glow, and pill treatment now vary by selected domain pack.
+  - `SaasIntro` now passes `domainPackId` through to all feature scenes.

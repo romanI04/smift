@@ -7,17 +7,149 @@ interface Props {
   feature: Feature;
   brandColor: string;
   accentColor: string;
+  domainPackId?: string;
 }
 
 // Card style with signature blue glow (like reference's "powered by voice" glow)
-const makeCardStyle = (accentColor: string) => ({
+const makeCardStyle = (accentColor: string, surface = 'white') => ({
   width: 680,
   borderRadius: 16,
   overflow: 'hidden' as const,
   boxShadow: `0 8px 40px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.06), 0 0 80px ${accentColor}12, 0 0 160px ${accentColor}08`,
   border: '1px solid rgba(0,0,0,0.06)',
+  backgroundColor: surface,
   fontFamily: 'inherit',
 });
+
+type VisualLayout = 'default' | 'terminal' | 'commerce' | 'ledger' | 'leaderboard' | 'timeline' | 'feed';
+
+interface DomainVisualTheme {
+  id: string;
+  layout: VisualLayout;
+  canvasGradient: string;
+  cardSurface: string;
+  cardHeaderSurface: string;
+  pillBackground: string;
+  glowColor: string;
+}
+
+const DEFAULT_VISUAL_THEME: DomainVisualTheme = {
+  id: 'general',
+  layout: 'default',
+  canvasGradient: 'radial-gradient(circle at 20% 20%, #f4f7ff 0%, #fafafa 45%, #f8f8f8 100%)',
+  cardSurface: 'white',
+  cardHeaderSurface: '#FAFAFA',
+  pillBackground: '#111111',
+  glowColor: '#2563EB',
+};
+
+const DOMAIN_VISUAL_THEMES: Record<string, DomainVisualTheme> = {
+  'b2b-saas': {
+    id: 'b2b-saas',
+    layout: 'default',
+    canvasGradient: 'radial-gradient(circle at 15% 15%, #eaf4ff 0%, #f7fbff 42%, #f6f8fb 100%)',
+    cardSurface: 'white',
+    cardHeaderSurface: '#F5F8FC',
+    pillBackground: '#1D4ED8',
+    glowColor: '#2563EB',
+  },
+  devtools: {
+    id: 'devtools',
+    layout: 'terminal',
+    canvasGradient: 'radial-gradient(circle at 18% 16%, #e9edf8 0%, #f4f6fb 45%, #f6f7fb 100%)',
+    cardSurface: '#111827',
+    cardHeaderSurface: '#0B1220',
+    pillBackground: '#0F172A',
+    glowColor: '#3B82F6',
+  },
+  'ecommerce-retail': {
+    id: 'ecommerce-retail',
+    layout: 'commerce',
+    canvasGradient: 'radial-gradient(circle at 15% 15%, #fff3e2 0%, #fff8ef 42%, #f9f7f3 100%)',
+    cardSurface: '#FFFCF7',
+    cardHeaderSurface: '#FFF2DF',
+    pillBackground: '#D97706',
+    glowColor: '#F59E0B',
+  },
+  fintech: {
+    id: 'fintech',
+    layout: 'ledger',
+    canvasGradient: 'radial-gradient(circle at 15% 15%, #edf7f2 0%, #f6fbf8 45%, #f7f8f8 100%)',
+    cardSurface: '#FCFFFD',
+    cardHeaderSurface: '#EDF7F2',
+    pillBackground: '#166534',
+    glowColor: '#22C55E',
+  },
+  gaming: {
+    id: 'gaming',
+    layout: 'leaderboard',
+    canvasGradient: 'radial-gradient(circle at 20% 20%, #f0ebff 0%, #f7f3ff 45%, #f8f8fb 100%)',
+    cardSurface: '#FCFAFF',
+    cardHeaderSurface: '#F2ECFF',
+    pillBackground: '#7C3AED',
+    glowColor: '#8B5CF6',
+  },
+  'media-creator': {
+    id: 'media-creator',
+    layout: 'feed',
+    canvasGradient: 'radial-gradient(circle at 15% 15%, #ffeef2 0%, #fff6f8 45%, #faf7f8 100%)',
+    cardSurface: '#FFFCFD',
+    cardHeaderSurface: '#FFEFF4',
+    pillBackground: '#BE185D',
+    glowColor: '#EC4899',
+  },
+  education: {
+    id: 'education',
+    layout: 'timeline',
+    canvasGradient: 'radial-gradient(circle at 15% 15%, #eef8ff 0%, #f6fbff 45%, #f8fafb 100%)',
+    cardSurface: '#FBFEFF',
+    cardHeaderSurface: '#EAF6FF',
+    pillBackground: '#0369A1',
+    glowColor: '#0EA5E9',
+  },
+  'real-estate': {
+    id: 'real-estate',
+    layout: 'commerce',
+    canvasGradient: 'radial-gradient(circle at 15% 15%, #f7f2eb 0%, #faf7f2 45%, #f8f8f6 100%)',
+    cardSurface: '#FFFEFC',
+    cardHeaderSurface: '#F4ECE0',
+    pillBackground: '#92400E',
+    glowColor: '#D97706',
+  },
+  'travel-hospitality': {
+    id: 'travel-hospitality',
+    layout: 'timeline',
+    canvasGradient: 'radial-gradient(circle at 15% 15%, #e8f6ff 0%, #f2fbff 45%, #f5f8fa 100%)',
+    cardSurface: '#FCFEFF',
+    cardHeaderSurface: '#E7F4FB',
+    pillBackground: '#0E7490',
+    glowColor: '#06B6D4',
+  },
+  'logistics-ops': {
+    id: 'logistics-ops',
+    layout: 'ledger',
+    canvasGradient: 'radial-gradient(circle at 15% 15%, #eef2f5 0%, #f5f8fa 45%, #f7f9fa 100%)',
+    cardSurface: '#FCFDFE',
+    cardHeaderSurface: '#EBF0F4',
+    pillBackground: '#334155',
+    glowColor: '#64748B',
+  },
+  'social-community': {
+    id: 'social-community',
+    layout: 'feed',
+    canvasGradient: 'radial-gradient(circle at 15% 15%, #eef2ff 0%, #f5f7ff 45%, #f8f8fb 100%)',
+    cardSurface: '#FDFDFF',
+    cardHeaderSurface: '#EDF1FF',
+    pillBackground: '#4338CA',
+    glowColor: '#6366F1',
+  },
+  general: DEFAULT_VISUAL_THEME,
+};
+
+function getVisualTheme(domainPackId?: string): DomainVisualTheme {
+  if (!domainPackId) return DEFAULT_VISUAL_THEME;
+  return DOMAIN_VISUAL_THEMES[domainPackId] ?? DEFAULT_VISUAL_THEME;
+}
 
 // --- UI Mockups ---
 
@@ -334,7 +466,146 @@ const GenericMockup: React.FC<{lines: string[]; charsToShow: number; accentColor
   );
 };
 
-const MOCKUP_MAP: Record<string, React.FC<{lines: string[]; charsToShow: number; accentColor: string}>> = {
+const CommerceMockup: React.FC<{lines: string[]; charsToShow: number; accentColor: string}> = ({
+  lines, charsToShow, accentColor,
+}) => {
+  const visible = lines.join('\n').slice(0, charsToShow);
+  const rows = visible.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 6);
+  const cards = rows.length > 0 ? rows : ['Top bundle', 'Fast checkout', 'Repeat purchase'];
+
+  return (
+    <div style={{...makeCardStyle(accentColor), backgroundColor: '#FFFCF7'}}>
+      <div style={{padding: '14px 18px', borderBottom: '1px solid #F3E8D8', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+        <span style={{fontSize: 14, fontWeight: 600, color: '#7C2D12', fontFamily: FONT_DISPLAY}}>Storefront Ops</span>
+        <span style={{fontSize: 11, color: '#B45309', fontFamily: FONT_BODY}}>Live catalog</span>
+      </div>
+      <div style={{padding: 16, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10}}>
+        {cards.slice(0, 4).map((line, i) => (
+          <div key={i} style={{border: '1px solid #F3E8D8', backgroundColor: 'white', borderRadius: 10, padding: '10px 12px'}}>
+            <span style={{fontSize: 12, color: '#78350F', fontFamily: FONT_BODY}}>{line}</span>
+            <div style={{marginTop: 8, height: 6, borderRadius: 3, backgroundColor: '#FEF3C7'}}>
+              <div style={{width: `${45 + i * 12}%`, height: 6, borderRadius: 3, backgroundColor: accentColor}} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const LedgerMockup: React.FC<{lines: string[]; charsToShow: number; accentColor: string}> = ({
+  lines, charsToShow, accentColor,
+}) => {
+  const visible = lines.join('\n').slice(0, charsToShow);
+  const rows = visible.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 6);
+  const items = rows.length > 0 ? rows : ['Risk Score: 72', 'Settlement: 2h', 'Dispute: 1.2%'];
+
+  return (
+    <div style={{...makeCardStyle(accentColor), backgroundColor: '#FCFFFD'}}>
+      <div style={{padding: '14px 18px', borderBottom: '1px solid #DCEFE5', display: 'flex', justifyContent: 'space-between'}}>
+        <span style={{fontSize: 14, fontWeight: 600, color: '#14532D', fontFamily: FONT_DISPLAY}}>Ledger Console</span>
+        <span style={{fontSize: 11, color: '#15803D', fontFamily: FONT_BODY}}>Auditable</span>
+      </div>
+      <div style={{padding: '8px 18px'}}>
+        {items.map((line, i) => (
+          <div key={i} style={{display: 'grid', gridTemplateColumns: '1.5fr 1fr 0.7fr', gap: 8, padding: '10px 0', borderBottom: '1px solid #ECF7F1'}}>
+            <span style={{fontSize: 12, color: '#14532D', fontFamily: FONT_BODY}}>{line.split(':')[0] || line}</span>
+            <span style={{fontSize: 12, color: '#065F46', fontFamily: FONT_BODY}}>{line.split(':')[1]?.trim() || `Line ${i + 1}`}</span>
+            <span style={{fontSize: 11, color: accentColor, textAlign: 'right', fontFamily: FONT_BODY}}>{i % 2 === 0 ? 'OK' : 'Watch'}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const LeaderboardMockup: React.FC<{lines: string[]; charsToShow: number; accentColor: string}> = ({
+  lines, charsToShow, accentColor,
+}) => {
+  const visible = lines.join('\n').slice(0, charsToShow);
+  const rows = visible.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 5);
+  const entries = rows.length > 0 ? rows : ['Comp Alpha', 'Comp Nova', 'Comp Tempo'];
+
+  return (
+    <div style={{...makeCardStyle(accentColor), backgroundColor: '#FCFAFF'}}>
+      <div style={{padding: '14px 18px', borderBottom: '1px solid #EADFFE', display: 'flex', justifyContent: 'space-between'}}>
+        <span style={{fontSize: 14, fontWeight: 600, color: '#5B21B6', fontFamily: FONT_DISPLAY}}>Meta Leaderboard</span>
+        <span style={{fontSize: 11, color: '#7C3AED', fontFamily: FONT_BODY}}>Patch live</span>
+      </div>
+      <div style={{padding: '10px 16px'}}>
+        {entries.map((line, i) => (
+          <div key={i} style={{display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: '1px solid #F2ECFF'}}>
+            <div style={{width: 24, height: 24, borderRadius: 12, backgroundColor: i === 0 ? '#F59E0B' : '#D8B4FE', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+              <span style={{fontSize: 11, color: '#111', fontWeight: 700, fontFamily: FONT_BODY}}>{i + 1}</span>
+            </div>
+            <span style={{flex: 1, fontSize: 13, color: '#4C1D95', fontFamily: FONT_BODY}}>{line}</span>
+            <span style={{fontSize: 12, color: accentColor, fontWeight: 600, fontFamily: FONT_BODY}}>{56 - i * 2}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const TimelineMockup: React.FC<{lines: string[]; charsToShow: number; accentColor: string}> = ({
+  lines, charsToShow, accentColor,
+}) => {
+  const visible = lines.join('\n').slice(0, charsToShow);
+  const rows = visible.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 5);
+  const steps = rows.length > 0 ? rows : ['Plan', 'Review', 'Execute'];
+
+  return (
+    <div style={{...makeCardStyle(accentColor), backgroundColor: '#FBFEFF'}}>
+      <div style={{padding: '14px 18px', borderBottom: '1px solid #DBECF8', display: 'flex', justifyContent: 'space-between'}}>
+        <span style={{fontSize: 14, fontWeight: 600, color: '#0C4A6E', fontFamily: FONT_DISPLAY}}>Cycle Timeline</span>
+        <span style={{fontSize: 11, color: '#0369A1', fontFamily: FONT_BODY}}>Current cycle</span>
+      </div>
+      <div style={{padding: '12px 18px'}}>
+        {steps.map((line, i) => (
+          <div key={i} style={{display: 'flex', gap: 12, padding: '8px 0'}}>
+            <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
+              <div style={{width: 12, height: 12, borderRadius: 6, backgroundColor: i === 0 ? accentColor : '#93C5FD'}} />
+              {i < steps.length - 1 && <div style={{width: 2, height: 20, backgroundColor: '#BFDBFE'}} />}
+            </div>
+            <span style={{fontSize: 13, color: '#1E3A8A', lineHeight: 1.5, fontFamily: FONT_BODY}}>{line}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const FeedMockup: React.FC<{lines: string[]; charsToShow: number; accentColor: string}> = ({
+  lines, charsToShow, accentColor,
+}) => {
+  const visible = lines.join('\n').slice(0, charsToShow);
+  const rows = visible.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 4);
+  const entries = rows.length > 0 ? rows : ['New post trend', 'Comment spike', 'Moderation queue'];
+
+  return (
+    <div style={{...makeCardStyle(accentColor), backgroundColor: '#FDFDFF'}}>
+      <div style={{padding: '14px 18px', borderBottom: '1px solid #E0E7FF', display: 'flex', justifyContent: 'space-between'}}>
+        <span style={{fontSize: 14, fontWeight: 600, color: '#312E81', fontFamily: FONT_DISPLAY}}>Community Feed</span>
+        <span style={{fontSize: 11, color: '#4F46E5', fontFamily: FONT_BODY}}>Live activity</span>
+      </div>
+      <div style={{padding: '10px 14px'}}>
+        {entries.map((line, i) => (
+          <div key={i} style={{display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 4px'}}>
+            <div style={{width: 28, height: 28, borderRadius: 14, backgroundColor: i % 2 === 0 ? '#C7D2FE' : '#FBCFE8'}} />
+            <div style={{flex: 1}}>
+              <span style={{fontSize: 13, color: '#1F2937', fontFamily: FONT_BODY}}>{line}</span>
+              <div style={{marginTop: 5, height: 5, borderRadius: 3, backgroundColor: '#EEF2FF'}}>
+                <div style={{width: `${40 + i * 15}%`, height: 5, borderRadius: 3, backgroundColor: accentColor}} />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const BASE_MOCKUP_MAP: Record<string, React.FC<{lines: string[]; charsToShow: number; accentColor: string}>> = {
   mail: EmailMockup,
   code: CodeMockup,
   docs: CodeMockup,
@@ -350,6 +621,17 @@ const MOCKUP_MAP: Record<string, React.FC<{lines: string[]; charsToShow: number;
   media: GenericMockup,
   generic: GenericMockup,
 };
+
+function selectMockup(icon: string, domainPackId: string | undefined): React.FC<{lines: string[]; charsToShow: number; accentColor: string}> {
+  const layout = getVisualTheme(domainPackId).layout;
+  if (layout === 'terminal') return CodeMockup;
+  if (layout === 'commerce') return CommerceMockup;
+  if (layout === 'ledger') return LedgerMockup;
+  if (layout === 'leaderboard') return LeaderboardMockup;
+  if (layout === 'timeline') return TimelineMockup;
+  if (layout === 'feed') return FeedMockup;
+  return BASE_MOCKUP_MAP[icon] || GenericMockup;
+}
 
 // --- Audio Bars (MUCH bigger, matching reference) ---
 const AudioBars: React.FC<{frame: number; active: boolean}> = ({frame, active}) => {
@@ -405,9 +687,10 @@ const PillIcon: React.FC<{icon: string; accentColor: string}> = ({icon, accentCo
 };
 
 // --- Main Component ---
-export const FeatureDemo: React.FC<Props> = ({feature, brandColor, accentColor}) => {
+export const FeatureDemo: React.FC<Props> = ({feature, brandColor, accentColor, domainPackId}) => {
   const frame = useCurrentFrame();
   const {fps, durationInFrames} = useVideoConfig();
+  const visualTheme = getVisualTheme(domainPackId);
 
   // Pill enters first — centered, expo ease
   const pillProgress = smoothValue(frame, 0, 18, 0, 1, easeOutExpo);
@@ -431,17 +714,17 @@ export const FeatureDemo: React.FC<Props> = ({feature, brandColor, accentColor})
   // Subtle card float during typing
   const cardFloat = typingDone ? 0 : Math.sin(frame * 0.04) * 1.2;
 
-  const Mockup = MOCKUP_MAP[feature.icon] || GenericMockup;
+  const Mockup = selectMockup(feature.icon, domainPackId);
 
   return (
-    <AbsoluteFill style={{backgroundColor: '#FAFAFA', justifyContent: 'center', alignItems: 'center'}}>
+    <AbsoluteFill style={{background: visualTheme.canvasGradient, justifyContent: 'center', alignItems: 'center'}}>
       {/* Blue ambient glow behind the whole assembly */}
       <div
         style={{
           position: 'absolute',
           width: 800,
           height: 600,
-          background: `radial-gradient(ellipse at center, ${accentColor}15 0%, transparent 70%)`,
+          background: `radial-gradient(ellipse at center, ${(visualTheme.glowColor || accentColor)}20 0%, transparent 70%)`,
           filter: 'blur(60px)',
           opacity: cardProgress,
         }}
@@ -473,12 +756,12 @@ export const FeatureDemo: React.FC<Props> = ({feature, brandColor, accentColor})
             display: 'flex',
             alignItems: 'center',
             gap: 16,
-            backgroundColor: brandColor,
+            backgroundColor: visualTheme.pillBackground || brandColor,
             borderRadius: 60,
             padding: '18px 36px',
             transform: `translateY(${pillY}px)`,
             opacity: pillProgress,
-            boxShadow: `0 8px 40px ${brandColor}40, 0 0 80px ${brandColor}12`,
+            boxShadow: `0 8px 40px ${(visualTheme.pillBackground || brandColor)}40, 0 0 80px ${(visualTheme.glowColor || accentColor)}18`,
           }}
         >
           <PillIcon icon={feature.icon} accentColor={accentColor} />

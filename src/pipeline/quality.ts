@@ -2,6 +2,7 @@ import type {ScrapedData} from './scraper';
 import type {ScriptResult} from './script-types';
 import type {TemplateProfile} from './templates';
 import type {DomainPack} from './domain-packs';
+import {summarizeGroundingUsage, type GroundingHints} from './grounding';
 
 export interface QualityReport {
   score: number;
@@ -17,6 +18,7 @@ interface ScoreArgs {
   scraped: ScrapedData;
   template: TemplateProfile;
   domainPack: DomainPack;
+  groundingHints?: GroundingHints;
   minScore: number;
   maxWarnings?: number;
   failOnWarnings?: boolean;
@@ -31,7 +33,7 @@ const PLACEHOLDER_PATTERNS = [
 ];
 
 export function scoreScriptQuality(args: ScoreArgs): QualityReport {
-  const {script, scraped, template, domainPack, minScore, maxWarnings = 3, failOnWarnings = false} = args;
+  const {script, scraped, template, domainPack, groundingHints, minScore, maxWarnings = 3, failOnWarnings = false} = args;
   const blockers: string[] = [];
   const warnings: string[] = [];
   const notes: string[] = [];
@@ -164,6 +166,24 @@ export function scoreScriptQuality(args: ScoreArgs): QualityReport {
   if (script.domainPackId && script.domainPackId !== domainPack.id) {
     warnings.push(`Script pack id "${script.domainPackId}" does not match selected pack "${domainPack.id}".`);
     score -= 4;
+  }
+
+  if (groundingHints) {
+    const grounding = summarizeGroundingUsage(script, groundingHints);
+    notes.push(`Grounding coverage: ${grounding.coverage} (${grounding.matchedTerms}/${grounding.totalTerms} terms, ${grounding.matchedPhrases}/${grounding.totalPhrases} phrases).`);
+
+    if (grounding.coverage < 0.12) {
+      warnings.push('Script appears weakly grounded in source language.');
+      score -= 8;
+    } else if (grounding.coverage < 0.2) {
+      warnings.push('Grounding coverage is low; consider adding more source-specific wording.');
+      score -= 4;
+    }
+
+    if (grounding.totalNumbers > 0 && grounding.matchedNumbers === 0) {
+      warnings.push('Script misses numeric signals available from source content.');
+      score -= 3;
+    }
   }
 
   const targetWeight = template.sceneWeightHint;

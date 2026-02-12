@@ -6,6 +6,7 @@ import {scoreScriptQuality, toQualityFeedback, type QualityReport} from './quali
 import {buildFallbackScript} from './fallback-script';
 import {autoFixScriptQuality} from './autofix';
 import type {ScriptResult} from './script-types';
+import {extractGroundingHints, summarizeGroundingUsage, type GroundingHints} from './grounding';
 import {
   DOMAIN_PACK_IDS,
   selectDomainPack,
@@ -135,6 +136,14 @@ async function run() {
     console.log(`  -> ${scraped.title}`);
     console.log(`  -> ${scraped.headings.length} headings, ${scraped.features.length} features found`);
     console.log(`  -> ${scraped.structuredHints.length} structured hints found`);
+    const groundingHints = extractGroundingHints(scraped);
+    track('grounding', 'Grounding hints extracted', {
+      terms: groundingHints.terms.length,
+      phrases: groundingHints.phrases.length,
+      numbers: groundingHints.numbers.length,
+      integrations: groundingHints.integrationCandidates.length,
+    });
+    console.log(`  -> Grounding hints: ${groundingHints.terms.length} terms, ${groundingHints.phrases.length} phrases, ${groundingHints.numbers.length} numbers`);
 
     const domainPackSelection = selectDomainPack(scraped, packArg);
     track('pack', 'Domain pack selected', {
@@ -167,6 +176,7 @@ async function run() {
       maxScriptAttempts,
       allowLowQuality,
       autoFix,
+      groundingHints,
     });
     track('script', 'Script generated', {
       score: qualityReport.score,
@@ -208,6 +218,7 @@ async function run() {
           domainPackConfidence: domainPackSelection.confidence,
           domainPackTopCandidates: domainPackSelection.topCandidates,
           domainPackScores: domainPackSelection.scores,
+          grounding: summarizeGroundingUsage(script, groundingHints),
           generationMode,
           qualityReport,
         },
@@ -337,6 +348,7 @@ async function generateScriptWithQualityGate(args: {
   scraped: Awaited<ReturnType<typeof scrapeUrl>>;
   templateSelection: ReturnType<typeof selectTemplate>;
   domainPackSelection: DomainPackSelection;
+  groundingHints: GroundingHints;
   minQuality: number;
   maxWarnings: number;
   qualityMode: QualityMode;
@@ -348,6 +360,7 @@ async function generateScriptWithQualityGate(args: {
     scraped,
     templateSelection,
     domainPackSelection,
+    groundingHints,
     minQuality,
     maxWarnings,
     qualityMode,
@@ -366,6 +379,7 @@ async function generateScriptWithQualityGate(args: {
       candidate = await generateScript(scraped, {
         templateProfile: templateSelection.profile,
         domainPack: domainPackSelection.pack,
+        groundingHints,
         qualityFeedback,
         maxRetries: 3,
       });
@@ -383,6 +397,7 @@ async function generateScriptWithQualityGate(args: {
       scraped,
       template: templateSelection.profile,
       domainPack: domainPackSelection.pack,
+      groundingHints,
       minScore: minQuality,
       maxWarnings,
       failOnWarnings,
@@ -400,7 +415,7 @@ async function generateScriptWithQualityGate(args: {
     }
 
     if (autoFix) {
-      const fixed = autoFixScriptQuality(candidate, scraped, domainPackSelection.pack);
+      const fixed = autoFixScriptQuality(candidate, scraped, domainPackSelection.pack, groundingHints);
       if (fixed.actions.length > 0) {
         console.log(`  -> Auto-fix applied: ${fixed.actions.join(' | ')}`);
       }
@@ -409,6 +424,7 @@ async function generateScriptWithQualityGate(args: {
         scraped,
         template: templateSelection.profile,
         domainPack: domainPackSelection.pack,
+        groundingHints,
         minScore: minQuality,
         maxWarnings,
         failOnWarnings,
@@ -430,19 +446,20 @@ async function generateScriptWithQualityGate(args: {
   }
 
   console.warn('  -> Model script did not pass quality gate, switching to deterministic fallback');
-  const fallback = buildFallbackScript(scraped, templateSelection.profile, domainPackSelection.pack);
+  const fallback = buildFallbackScript(scraped, templateSelection.profile, domainPackSelection.pack, groundingHints);
   const fallbackReport = scoreScriptQuality({
     script: fallback,
     scraped,
     template: templateSelection.profile,
     domainPack: domainPackSelection.pack,
+    groundingHints,
     minScore: minQuality,
     maxWarnings,
     failOnWarnings,
   });
 
   if (autoFix && !fallbackReport.passed) {
-    const fixedFallback = autoFixScriptQuality(fallback, scraped, domainPackSelection.pack);
+    const fixedFallback = autoFixScriptQuality(fallback, scraped, domainPackSelection.pack, groundingHints);
     if (fixedFallback.actions.length > 0) {
       console.log(`  -> Fallback auto-fix applied: ${fixedFallback.actions.join(' | ')}`);
     }
@@ -451,6 +468,7 @@ async function generateScriptWithQualityGate(args: {
       scraped,
       template: templateSelection.profile,
       domainPack: domainPackSelection.pack,
+      groundingHints,
       minScore: minQuality,
       maxWarnings,
       failOnWarnings,

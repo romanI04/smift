@@ -3,12 +3,21 @@ import type {ScrapedData} from './scraper';
 import type {ScriptResult} from './script-types';
 import type {TemplateProfile} from './templates';
 import type {DomainPack, DomainPackId, FeatureIconId} from './domain-packs';
+import {
+  extractGroundingHints,
+  pickGroundedIntegration,
+  pickGroundedNumber,
+  pickGroundedPhrase,
+  type GroundingHints,
+} from './grounding';
 
 export function buildFallbackScript(
   scraped: ScrapedData,
   template: TemplateProfile,
   domainPack: DomainPack,
+  groundingHintsArg?: GroundingHints,
 ): ScriptResult {
+  const groundingHints = groundingHintsArg ?? extractGroundingHints(scraped);
   const brandName = inferBrandName(scraped);
   const brandUrl = scraped.domain;
   const brandColor = pickBrandColor(scraped.colors);
@@ -17,8 +26,8 @@ export function buildFallbackScript(
   const tagline = makeTagline(scraped);
   const hooks = buildHooks(domainPack.id);
 
-  const features = buildFeatures(scraped, domainPack);
-  const integrations = buildIntegrations(scraped, domainPack);
+  const features = buildFeatures(scraped, domainPack, groundingHints);
+  const integrations = buildIntegrations(scraped, domainPack, groundingHints);
   const ctaUrl = scraped.domain;
 
   const narrationSegments = buildNarration({
@@ -112,8 +121,9 @@ function buildHooks(packId: DomainPackId): {hookLine1: string; hookLine2: string
   return map[packId];
 }
 
-function buildFeatures(scraped: ScrapedData, domainPack: DomainPack): Feature[] {
-  const seeds = scraped.features.filter((f) => f.length > 20).slice(0, 12);
+function buildFeatures(scraped: ScrapedData, domainPack: DomainPack, groundingHints: GroundingHints): Feature[] {
+  const groundedSeeds = groundingHints.phrases.slice(0, 8);
+  const seeds = [...groundedSeeds, ...scraped.features.filter((f) => f.length > 20)].slice(0, 12);
   const selected = pickDistinctSeeds(seeds, 3);
 
   while (selected.length < 3) {
@@ -122,9 +132,10 @@ function buildFeatures(scraped: ScrapedData, domainPack: DomainPack): Feature[] 
 
   return selected.map((seed, index) => {
     const icon = inferIcon(seed, domainPack.allowedIcons);
-    const caption = captionFromSeed(seed);
-    const appName = appNameFromSeed(seed, index, domainPack.id);
-    const demoLines = demoLinesFromSeed(seed, index, domainPack);
+    const groundedPhrase = pickGroundedPhrase(groundingHints, index);
+    const caption = captionFromSeed(groundedPhrase ?? seed);
+    const appName = appNameFromSeed(groundedPhrase ?? seed, index, domainPack.id);
+    const demoLines = demoLinesFromSeed(seed, index, domainPack, groundingHints);
     return {
       icon,
       appName,
@@ -221,13 +232,15 @@ function appNameFromSeed(seed: string, index: number, packId: DomainPackId): str
   return defaults[packId][index] ?? `Feature ${index + 1}`;
 }
 
-function demoLinesFromSeed(seed: string, index: number, pack: DomainPack): string[] {
-  const firstLine = seed.length > 64 ? `${seed.slice(0, 61)}...` : seed;
+function demoLinesFromSeed(seed: string, index: number, pack: DomainPack, groundingHints: GroundingHints): string[] {
+  const groundedPhrase = pickGroundedPhrase(groundingHints, index) ?? seed;
+  const firstLine = groundedPhrase.length > 64 ? `${groundedPhrase.slice(0, 61)}...` : groundedPhrase;
   const fields = pack.concreteFields;
+  const groundedNumber = pickGroundedNumber(groundingHints, index);
 
   return [
     firstLine,
-    `${fields[0] ?? 'Status'}: ${sampleValue(fields[0] ?? 'Status', index)}`,
+    `${fields[0] ?? 'Status'}: ${groundedNumber ?? sampleValue(fields[0] ?? 'Status', index)}`,
     `${fields[1] ?? 'Update'}: ${sampleValue(fields[1] ?? 'Update', index + 1)}`,
     `${fields[2] ?? 'Next Step'}: ${sampleValue(fields[2] ?? 'Next Step', index + 2)}`,
   ];
@@ -261,7 +274,7 @@ function sampleValue(field: string, seed: number): string {
   return `${field} ${n}`;
 }
 
-function buildIntegrations(scraped: ScrapedData, pack: DomainPack): string[] {
+function buildIntegrations(scraped: ScrapedData, pack: DomainPack, groundingHints: GroundingHints): string[] {
   const normalized = new Set<string>();
   const fromLinks = scraped.links
     .map((entry) => entry.split(':')[0].trim())
@@ -269,7 +282,11 @@ function buildIntegrations(scraped: ScrapedData, pack: DomainPack): string[] {
     .slice(0, 12);
 
   const picked: string[] = [];
-  for (const candidate of [...fromLinks, ...pack.fallbackIntegrations]) {
+  const grounded = groundingHints.integrationCandidates.length > 0
+    ? groundingHints.integrationCandidates
+    : [pickGroundedIntegration(groundingHints, 0)].filter(Boolean) as string[];
+
+  for (const candidate of [...grounded, ...fromLinks, ...pack.fallbackIntegrations]) {
     const key = candidate.toLowerCase();
     if (normalized.has(key)) continue;
     normalized.add(key);

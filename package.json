@@ -6,7 +6,9 @@
     "studio": "remotion studio src/index.ts",
     "render": "remotion render src/index.ts SaasIntro out/video.mp4",
     "preview": "remotion preview src/index.ts",
-    "generate": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/run.ts"
+    "generate": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/run.ts",
+    "eval": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/eval.ts",
+    "serve": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/server/serve.ts"
   },
   "dependencies": {
     "@remotion/bundler": "^4.0.421",

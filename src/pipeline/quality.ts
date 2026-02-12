@@ -143,8 +143,7 @@ export function scoreScriptQuality(args: ScoreArgs): QualityReport {
   if (Array.isArray(script.sceneWeights) && script.sceneWeights.length === 8) {
     const deviation = averageDeviation(script.sceneWeights, targetWeight);
     if (deviation > 5) {
-      warnings.push('Scene pacing deviates significantly from selected template profile.');
-      score -= 3;
+      notes.push(`Scene pacing deviation vs template: ${deviation.toFixed(1)}.`);
     }
   }
 

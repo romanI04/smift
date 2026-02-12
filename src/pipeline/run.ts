@@ -20,6 +20,24 @@ type QualityPreset = 'draft' | 'yc';
 type TemplateArg = 'auto' | TemplateId;
 type VoiceMode = 'single' | 'segmented';
 type QualityMode = 'standard' | 'strict';
+type ManifestStatus = 'running' | 'completed' | 'failed';
+
+interface JobManifest {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  status: ManifestStatus;
+  url: string;
+  settings: Record<string, unknown>;
+  events: Array<{at: string; stage: string; message: string; details?: Record<string, unknown>}>;
+  outputs: {
+    scriptPath?: string;
+    qualityPath?: string;
+    videoPath?: string;
+    audioPath?: string;
+  };
+  error?: string;
+}
 
 async function run() {
   const args = process.argv.slice(2);
@@ -34,6 +52,7 @@ async function run() {
   const allowLowQuality = args.includes('--allow-low-quality');
   const autoFix = !args.includes('--no-autofix');
   const strictFlag = args.includes('--strict');
+  const skipRender = args.includes('--skip-render');
   const url = args.find((a) => !a.startsWith('--'));
 
   if (!url) {
@@ -41,7 +60,7 @@ async function run() {
       'Usage: npm run generate -- <url> [--voice=none|elevenlabs|openai|chatterbox] [--quality=draft|yc] ' +
       '[--template=auto|yc-saas|product-demo|founder-story] [--voice-mode=single|segmented] ' +
       '[--quality-mode=standard|strict] [--strict] [--max-warnings=3] [--min-quality=74] ' +
-      '[--max-script-attempts=4] [--allow-low-quality] [--no-autofix]',
+      '[--max-script-attempts=4] [--allow-low-quality] [--no-autofix] [--skip-render]',
     );
     process.exit(1);
   }
@@ -51,152 +70,234 @@ async function run() {
   const outputName = url.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-');
   const outputDir = path.resolve(__dirname, '../../out');
   const publicDir = path.resolve(__dirname, '../../public');
+  const manifestPath = path.join(outputDir, `${outputName}-job.json`);
+
+  const manifest: JobManifest = {
+    id: `${outputName}-${Date.now()}`,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    status: 'running',
+    url,
+    settings: {
+      voiceEngine: voiceEngine ?? 'auto',
+      quality,
+      template: templateArg,
+      voiceMode,
+      qualityMode: effectiveQualityMode,
+      minQuality,
+      maxWarnings,
+      maxScriptAttempts,
+      allowLowQuality,
+      autoFix,
+      skipRender,
+    },
+    events: [],
+    outputs: {},
+  };
+
+  const saveManifest = () => {
+    manifest.updatedAt = new Date().toISOString();
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  };
+
+  const track = (stage: string, message: string, details?: Record<string, unknown>) => {
+    manifest.events.push({
+      at: new Date().toISOString(),
+      stage,
+      message,
+      ...(details ? {details} : {}),
+    });
+    saveManifest();
+  };
 
   if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, {recursive: true});
   if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, {recursive: true});
+  saveManifest();
 
-  console.log(`\n[1/5] Scraping ${url}...`);
-  const scraped = await scrapeUrl(url);
-  console.log(`  -> ${scraped.title}`);
-  console.log(`  -> ${scraped.headings.length} headings, ${scraped.features.length} features found`);
+  try {
+    console.log(`\n[1/5] Scraping ${url}...`);
+    const scraped = await scrapeUrl(url);
+    track('scrape', 'Scrape completed', {
+      title: scraped.title,
+      headings: scraped.headings.length,
+      features: scraped.features.length,
+    });
+    console.log(`  -> ${scraped.title}`);
+    console.log(`  -> ${scraped.headings.length} headings, ${scraped.features.length} features found`);
 
-  const templateSelection = selectTemplate(scraped, templateArg);
-  console.log(`  -> Template: ${templateSelection.profile.id} (${templateSelection.reason})`);
+    const templateSelection = selectTemplate(scraped, templateArg);
+    track('template', 'Template selected', {id: templateSelection.profile.id, reason: templateSelection.reason});
+    console.log(`  -> Template: ${templateSelection.profile.id} (${templateSelection.reason})`);
 
-  console.log(`\n[2/5] Generating script with quality gate...`);
-  const {script, qualityReport, generationMode} = await generateScriptWithQualityGate({
-    scraped,
-    minQuality,
-    maxWarnings,
-    qualityMode: effectiveQualityMode,
-    maxScriptAttempts,
-    allowLowQuality,
-    autoFix,
-    templateArg,
-  });
+    console.log(`\n[2/5] Generating script with quality gate...`);
+    const {script, qualityReport, generationMode} = await generateScriptWithQualityGate({
+      scraped,
+      minQuality,
+      maxWarnings,
+      qualityMode: effectiveQualityMode,
+      maxScriptAttempts,
+      allowLowQuality,
+      autoFix,
+      templateArg,
+    });
+    track('script', 'Script generated', {
+      score: qualityReport.score,
+      passed: qualityReport.passed,
+      generationMode,
+      warnings: qualityReport.warnings.length,
+      blockers: qualityReport.blockers.length,
+    });
 
-  console.log(`  -> Script mode: ${generationMode}`);
-  console.log(`  -> Quality score: ${qualityReport.score}/${qualityReport.minScore} (passed=${qualityReport.passed})`);
-  if (qualityReport.blockers.length > 0) {
-    console.log(`  -> Blockers: ${qualityReport.blockers.join(' | ')}`);
-  }
-  if (qualityReport.warnings.length > 0) {
-    console.log(`  -> Warnings: ${qualityReport.warnings.slice(0, 3).join(' | ')}`);
-  }
+    console.log(`  -> Script mode: ${generationMode}`);
+    console.log(`  -> Quality score: ${qualityReport.score}/${qualityReport.minScore} (passed=${qualityReport.passed})`);
+    if (qualityReport.blockers.length > 0) {
+      console.log(`  -> Blockers: ${qualityReport.blockers.join(' | ')}`);
+    }
+    if (qualityReport.warnings.length > 0) {
+      console.log(`  -> Warnings: ${qualityReport.warnings.slice(0, 3).join(' | ')}`);
+    }
 
-  const fullNarration = script.narrationSegments.join(' ');
-  console.log(`  -> Brand: ${script.brandName}`);
-  console.log(`  -> Features: ${script.features.map((f) => f.appName).join(', ')}`);
-  console.log(`  -> Narration words: ${countWords(fullNarration)}`);
+    const fullNarration = script.narrationSegments.join(' ');
+    console.log(`  -> Brand: ${script.brandName}`);
+    console.log(`  -> Features: ${script.features.map((f) => f.appName).join(', ')}`);
+    console.log(`  -> Narration words: ${countWords(fullNarration)}`);
 
-  const scriptPath = path.join(outputDir, `${outputName}-script.json`);
-  fs.writeFileSync(scriptPath, JSON.stringify({...script, narration: fullNarration}, null, 2));
+    const scriptPath = path.join(outputDir, `${outputName}-script.json`);
+    fs.writeFileSync(scriptPath, JSON.stringify({...script, narration: fullNarration}, null, 2));
+    manifest.outputs.scriptPath = scriptPath;
 
-  const qualityPath = path.join(outputDir, `${outputName}-quality.json`);
-  fs.writeFileSync(
-    qualityPath,
-    JSON.stringify(
-      {
-        generatedAt: new Date().toISOString(),
-        url,
-        template: templateSelection.profile.id,
-        templateReason: templateSelection.reason,
-        generationMode,
-        qualityReport,
-      },
-      null,
-      2,
-    ),
-  );
-  console.log(`  -> Saved script: ${scriptPath}`);
-  console.log(`  -> Saved quality report: ${qualityPath}`);
+    const qualityPath = path.join(outputDir, `${outputName}-quality.json`);
+    fs.writeFileSync(
+      qualityPath,
+      JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          url,
+          template: templateSelection.profile.id,
+          templateReason: templateSelection.reason,
+          generationMode,
+          qualityReport,
+        },
+        null,
+        2,
+      ),
+    );
+    manifest.outputs.qualityPath = qualityPath;
+    track('script', 'Script artifacts saved', {scriptPath, qualityPath});
+    console.log(`  -> Saved script: ${scriptPath}`);
+    console.log(`  -> Saved quality report: ${qualityPath}`);
 
-  console.log(`\n[3/5] Generating voice...`);
-  const audioFilename = `${outputName}-voice.mp3`;
-  const audioPath = path.join(outputDir, audioFilename);
-  let voiceResult: {path: string; durationMs: number} | null = null;
-  let estimatedDurationMs: number | null = null;
-  let segmentDurationsMs: number[] | null = null;
+    if (skipRender) {
+      console.log('\n[3/5] Skipping voice/render (--skip-render enabled)');
+      console.log('\n[5/5] Done');
+      console.log('  Script and quality report generated');
+      manifest.status = 'completed';
+      track('finish', 'Completed with skip-render mode');
+      return;
+    }
 
-  if (voiceEngine === 'none') {
-    estimatedDurationMs = estimateNarrationDurationMs(fullNarration);
-    console.log(`  -> Voice disabled. Using estimated duration ${estimatedDurationMs}ms`);
-  } else {
-    try {
-      const voice = await generateVoiceWithResilience(script.narrationSegments, audioPath, voiceEngine, voiceMode);
-      voiceResult = {path: voice.path, durationMs: voice.totalDurationMs};
-      segmentDurationsMs = voice.segmentDurationsMs;
-      console.log(`  -> Audio: ${voiceResult.path} (${voiceResult.durationMs}ms) via ${voice.engineUsed}`);
-      console.log(`  -> Segment durations: [${segmentDurationsMs.join(', ')}]`);
+    console.log(`\n[3/5] Generating voice...`);
+    const audioFilename = `${outputName}-voice.mp3`;
+    const audioPath = path.join(outputDir, audioFilename);
+    let voiceResult: {path: string; durationMs: number} | null = null;
+    let estimatedDurationMs: number | null = null;
+    let segmentDurationsMs: number[] | null = null;
 
-      const publicAudioPath = path.join(publicDir, 'voice.mp3');
-      fs.copyFileSync(audioPath, publicAudioPath);
-      console.log('  -> Copied to public/voice.mp3');
-    } catch (e: any) {
-      console.warn(`  -> Voice generation failed: ${e.message}`);
+    if (voiceEngine === 'none') {
       estimatedDurationMs = estimateNarrationDurationMs(fullNarration);
-      console.warn(`  -> Falling back to estimated duration ${estimatedDurationMs}ms`);
+      track('voice', 'Voice disabled, estimated duration used', {estimatedDurationMs});
+      console.log(`  -> Voice disabled. Using estimated duration ${estimatedDurationMs}ms`);
+    } else {
+      try {
+        const voice = await generateVoiceWithResilience(script.narrationSegments, audioPath, voiceEngine, voiceMode);
+        voiceResult = {path: voice.path, durationMs: voice.totalDurationMs};
+        segmentDurationsMs = voice.segmentDurationsMs;
+        manifest.outputs.audioPath = audioPath;
+        track('voice', 'Voice generated', {engineUsed: voice.engineUsed, durationMs: voice.totalDurationMs});
+        console.log(`  -> Audio: ${voiceResult.path} (${voiceResult.durationMs}ms) via ${voice.engineUsed}`);
+        console.log(`  -> Segment durations: [${segmentDurationsMs.join(', ')}]`);
+
+        const publicAudioPath = path.join(publicDir, 'voice.mp3');
+        fs.copyFileSync(audioPath, publicAudioPath);
+        console.log('  -> Copied to public/voice.mp3');
+      } catch (e: any) {
+        console.warn(`  -> Voice generation failed: ${e.message}`);
+        estimatedDurationMs = estimateNarrationDurationMs(fullNarration);
+        track('voice', 'Voice generation failed, switched to estimated duration', {error: e.message, estimatedDurationMs});
+        console.warn(`  -> Falling back to estimated duration ${estimatedDurationMs}ms`);
+      }
     }
-  }
 
-  console.log(`\n[4/5] Rendering video with Remotion...`);
-  const entryPoint = path.resolve(__dirname, '../index.ts');
-  const bundled = await bundle({entryPoint, publicDir});
+    console.log(`\n[4/5] Rendering video with Remotion...`);
+    const entryPoint = path.resolve(__dirname, '../index.ts');
+    const bundled = await bundle({entryPoint, publicDir});
 
-  const inputProps: Record<string, unknown> = {
-    ...script,
-    ...(voiceResult && {
-      audioSrc: 'voice.mp3',
-      audioDurationMs: voiceResult.durationMs,
-    }),
-    ...(!voiceResult && estimatedDurationMs && {
-      audioDurationMs: estimatedDurationMs,
-    }),
-    ...(segmentDurationsMs && {segmentDurationsMs}),
-  };
-
-  delete inputProps.narrationSegments;
-
-  const composition = await selectComposition({
-    serveUrl: bundled,
-    id: 'SaasIntro',
-    inputProps,
-  });
-
-  const videoPath = path.join(outputDir, `${outputName}.mp4`);
-  const qualityOptions = quality === 'draft'
-    ? {
-      crf: 23,
-      x264Preset: 'veryfast' as const,
-      imageFormat: 'jpeg' as const,
-      audioCodec: 'aac' as const,
-      audioBitrate: '192k' as const,
-    }
-    : {
-      crf: 16,
-      x264Preset: 'slow' as const,
-      imageFormat: 'png' as const,
-      pixelFormat: 'yuv420p' as const,
-      audioCodec: 'aac' as const,
-      audioBitrate: '320k' as const,
-      encodingMaxRate: '16M' as const,
-      encodingBufferSize: '32M' as const,
+    const inputProps: Record<string, unknown> = {
+      ...script,
+      ...(voiceResult && {
+        audioSrc: 'voice.mp3',
+        audioDurationMs: voiceResult.durationMs,
+      }),
+      ...(!voiceResult && estimatedDurationMs && {
+        audioDurationMs: estimatedDurationMs,
+      }),
+      ...(segmentDurationsMs && {segmentDurationsMs}),
     };
 
-  await renderMedia({
-    composition: {...composition, props: inputProps},
-    serveUrl: bundled,
-    codec: 'h264',
-    ...qualityOptions,
-    outputLocation: videoPath,
-    concurrency: 4,
-    enforceAudioTrack: true,
-  });
+    delete inputProps.narrationSegments;
 
-  console.log(`\n[5/5] Done`);
-  console.log(`  Video: ${videoPath}`);
-  console.log(`  Quality preset: ${quality}`);
-  if (voiceResult) console.log('  Voice is baked into the video');
+    const composition = await selectComposition({
+      serveUrl: bundled,
+      id: 'SaasIntro',
+      inputProps,
+    });
+
+    const videoPath = path.join(outputDir, `${outputName}.mp4`);
+    const qualityOptions = quality === 'draft'
+      ? {
+        crf: 23,
+        x264Preset: 'veryfast' as const,
+        imageFormat: 'jpeg' as const,
+        audioCodec: 'aac' as const,
+        audioBitrate: '192k' as const,
+      }
+      : {
+        crf: 16,
+        x264Preset: 'slow' as const,
+        imageFormat: 'png' as const,
+        pixelFormat: 'yuv420p' as const,
+        audioCodec: 'aac' as const,
+        audioBitrate: '320k' as const,
+        encodingMaxRate: '16M' as const,
+        encodingBufferSize: '32M' as const,
+      };
+
+    await renderMedia({
+      composition: {...composition, props: inputProps},
+      serveUrl: bundled,
+      codec: 'h264',
+      ...qualityOptions,
+      outputLocation: videoPath,
+      concurrency: 4,
+      enforceAudioTrack: true,
+    });
+    manifest.outputs.videoPath = videoPath;
+    track('render', 'Video rendered', {videoPath});
+
+    console.log(`\n[5/5] Done`);
+    console.log(`  Video: ${videoPath}`);
+    console.log(`  Quality preset: ${quality}`);
+    if (voiceResult) console.log('  Voice is baked into the video');
+    manifest.status = 'completed';
+    track('finish', 'Completed successfully');
+  } catch (e: any) {
+    manifest.status = 'failed';
+    manifest.error = e.message;
+    track('error', 'Pipeline failed', {error: e.message});
+    throw e;
+  } finally {
+    saveManifest();
+  }
 }
 
 async function generateScriptWithQualityGate(args: {

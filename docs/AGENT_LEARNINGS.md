@@ -51,10 +51,12 @@
 ## Real Benchmarking
 
 - `npm run eval:real -- --limit=N` is the fastest way to track real-domain pack drift and script quality together.
+- Use `npm run eval:real:smoke` for CI: it runs a stable multi-pack subset and enforces threshold gates.
 - Track both metrics: quality pass-rate can stay high while pack accuracy drops; both need to be monitored.
 - B2B recall depends heavily on customer-service/sales vocabulary; signal terms now help recover sparse or marketing-heavy pages.
 - After changing one pack’s signal terms, run `eval:real` on at least 20 URLs to check cross-pack regressions.
 - If tie-break logic can choose a non-top raw candidate, compute score separation with an absolute gap before ambiguity fallback checks.
+- Keep smoke thresholds realistic (`min-pack-comparable`, `max-errors`) so transient fetch blocks do not create noisy CI failures.
 
 ## Known Gaps / Next Work
 
@@ -64,5 +66,4 @@
 - Add auth/quotas before exposing self-serve runner beyond localhost.
 - Add a renderless "quality-only" output mode in server responses for fast triage.
 - Add domain-aware terms to scraper extraction (e.g. schema.org / JSON-LD hints) to improve pack confidence on sparse landing pages.
-- Add CI gating for `npm run eval:packs` and fail PRs on pack-routing regressions.
 - Reduce repetitive feature-name roots on sparse single-theme sites (e.g. TFT pages repeating "Teamfight Tactics" variants).

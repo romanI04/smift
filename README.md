@@ -21,6 +21,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `npm run eval -- --limit=10`: benchmark batch summary (JSON + CSV)
 - `npm run eval:packs`: offline domain-pack regression suite
 - `npm run eval:real -- --limit=20`: real-URL benchmark with expected-pack accuracy
+- `npm run eval:real:smoke`: CI-friendly real-URL smoke suite with threshold gating
 - `npm run serve`: local self-serve queue + web UI (`http://localhost:3030`)
   - quality-only status view: `GET /api/jobs/:id/quality` (or `GET /api/jobs/:id?view=quality`)
 
@@ -39,6 +40,15 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `--no-autofix`
 - `--no-relevance-guard`
 - `--skip-render`
+
+## Useful Flags (`eval:real`)
+
+- `--suite=full|smoke`
+- `--limit=<n>`
+- `--min-pass-rate=<percent>`
+- `--min-pack-accuracy=<percent>`
+- `--min-pack-comparable=<n>`
+- `--max-errors=<n>`
 
 ## Outputs
 

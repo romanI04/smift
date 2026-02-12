@@ -2,6 +2,7 @@ import {spawnSync} from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import {REAL_BENCHMARK_CASES} from './benchmark-real-urls';
+import {REAL_SMOKE_BENCHMARK_CASES} from './benchmark-real-smoke-urls';
 
 interface RealEvalResult {
   url: string;
@@ -30,9 +31,15 @@ interface QualityReportFile {
 async function run() {
   const args = process.argv.slice(2);
   const outDir = path.resolve(__dirname, '../../out');
+  const suite = parseStringArg(args, '--suite') ?? 'full';
   const minQuality = parseNumberArg(args, '--min-quality', 80);
   const maxWarnings = parseNumberArg(args, '--max-warnings', 1);
-  const limit = parseNumberArg(args, '--limit', REAL_BENCHMARK_CASES.length);
+  const benchmarkCases = suite === 'smoke' ? REAL_SMOKE_BENCHMARK_CASES : REAL_BENCHMARK_CASES;
+  const limit = parseNumberArg(args, '--limit', benchmarkCases.length);
+  const minPassRate = parseOptionalNumberArg(args, '--min-pass-rate');
+  const minPackAccuracy = parseOptionalNumberArg(args, '--min-pack-accuracy');
+  const minPackComparable = parseOptionalNumberArg(args, '--min-pack-comparable');
+  const maxErrors = parseOptionalNumberArg(args, '--max-errors');
   const strict = args.includes('--strict');
   const voice = parseStringArg(args, '--voice') ?? 'none';
   const quality = parseStringArg(args, '--quality') ?? 'draft';
@@ -40,11 +47,11 @@ async function run() {
   const allowLowQuality = args.includes('--allow-low-quality');
   const noAutofix = args.includes('--no-autofix');
 
-  const cases = REAL_BENCHMARK_CASES.slice(0, Math.max(1, limit));
+  const cases = benchmarkCases.slice(0, Math.max(1, limit));
   const startedAt = Date.now();
   const results: RealEvalResult[] = [];
 
-  console.log(`Running real benchmark on ${cases.length} URL(s)...`);
+  console.log(`Running ${suite} real benchmark on ${cases.length} URL(s)...`);
 
   for (let i = 0; i < cases.length; i++) {
     const testCase = cases[i];
@@ -138,6 +145,7 @@ async function run() {
   const packAccuracy = packComparable.length === 0
     ? null
     : Number(((packMatches / packComparable.length) * 100).toFixed(1));
+  const errorCount = results.filter((r) => Boolean(r.error)).length;
 
   const summary = {
     generatedAt: new Date().toISOString(),
@@ -150,6 +158,7 @@ async function run() {
       maxScriptAttempts,
       allowLowQuality,
       noAutofix,
+      suite,
       urlsEvaluated: total,
     },
     aggregate: {
@@ -160,6 +169,7 @@ async function run() {
       packAccuracy,
       packMatches,
       packComparable: packComparable.length,
+      errorCount,
       totalDurationSec: totalSec,
     },
     results,
@@ -175,9 +185,31 @@ async function run() {
   console.log(`  -> pack accuracy: ${packAccuracy ?? 'n/a'}% (${packMatches}/${packComparable.length})`);
   console.log(`  -> pass rate: ${passRate}% (${passed}/${total})`);
   console.log(`  -> avg score: ${avgScore ?? 'n/a'}`);
+  console.log(`  -> errors: ${errorCount}`);
   console.log(`  -> duration: ${totalSec}s`);
   console.log(`  -> summary json: ${summaryJson}`);
   console.log(`  -> summary csv: ${summaryCsv}`);
+
+  const failures: string[] = [];
+  if (minPassRate !== undefined && passRate < minPassRate) {
+    failures.push(`pass rate ${passRate}% is below required ${minPassRate}%`);
+  }
+  if (minPackAccuracy !== undefined) {
+    if (packAccuracy === null) failures.push(`pack accuracy unavailable (need >= ${minPackAccuracy}%)`);
+    else if (packAccuracy < minPackAccuracy) failures.push(`pack accuracy ${packAccuracy}% is below required ${minPackAccuracy}%`);
+  }
+  if (minPackComparable !== undefined && packComparable.length < minPackComparable) {
+    failures.push(`pack-comparable cases ${packComparable.length} is below required ${minPackComparable}`);
+  }
+  if (maxErrors !== undefined && errorCount > maxErrors) {
+    failures.push(`error count ${errorCount} exceeds max ${maxErrors}`);
+  }
+
+  if (failures.length > 0) {
+    console.error('\nReal benchmark threshold check failed:');
+    for (const failure of failures) console.error(`  - ${failure}`);
+    process.exit(1);
+  }
 }
 
 function parseStringArg(args: string[], key: string): string | undefined {
@@ -190,6 +222,13 @@ function parseNumberArg(args: string[], key: string, fallback: number): number {
   if (!raw) return fallback;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseOptionalNumberArg(args: string[], key: string): number | undefined {
+  const raw = parseStringArg(args, key);
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function timestamp(): string {

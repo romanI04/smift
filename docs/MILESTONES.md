@@ -143,3 +143,19 @@
 - Re-ran benchmarks:
   - `npm run eval:packs`: `100%` (14/14)
   - `npm run eval:real -- --limit=20 --max-script-attempts=1 --allow-low-quality`: `100%` pack accuracy on comparable domains (`19/19`; one blocked fetch on `tracker.gg`), `95%` pass rate (`19/20`).
+
+### M13 - CI Regression Gate (Packs + Real Smoke)
+
+- Extended real benchmark runner (`src/pipeline/eval-real.ts`) with:
+  - suite selection (`--suite=full|smoke`)
+  - optional threshold gating (`--min-pass-rate`, `--min-pack-accuracy`, `--min-pack-comparable`, `--max-errors`).
+- Added stable CI smoke set (`src/pipeline/benchmark-real-smoke-urls.ts`) spanning core families:
+  - devtools, b2b-saas, ecommerce-retail, fintech, gaming.
+- Added `npm run eval:real:smoke` script for one-command CI checks.
+- Updated GitHub Actions workflow (`.github/workflows/pack-regression.yml`) to run both:
+  - `npm run eval:packs`
+  - `npm run eval:real:smoke`
+- Local validation:
+  - `npx tsc --noEmit` pass
+  - `npm run eval:packs` pass (`14/14`)
+  - `npm run eval:real:smoke` pass (`100%` pack accuracy on `10/10`, `90%` quality pass rate).

@@ -28,3 +28,6 @@ jobs:
 
       - name: Domain pack regression suite
         run: npm run eval:packs
+
+      - name: Real URL smoke benchmark
+        run: npm run eval:real:smoke

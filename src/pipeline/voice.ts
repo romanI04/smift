@@ -135,6 +135,44 @@ export async function generateVoicePerSegment(
 }
 
 /**
+ * Generate the full narration in a single TTS call for consistent pacing,
+ * then estimate per-segment durations via word-count proportional splitting.
+ */
+export async function generateVoiceSingleCall(
+  segments: string[],
+  outputPath: string,
+  requestedEngine?: Engine,
+): Promise<PerSegmentResult> {
+  const engine = requestedEngine || detectEngine();
+  console.log(`  -> Single-call voice generation with ${engine}`);
+
+  const fullText = segments.join(' ');
+  const result = await generateVoice(fullText, {outputPath, engine});
+
+  // Proportional split: each segment's duration = (segment words / total words) * total duration
+  const segmentWordCounts = segments.map(s => s.trim().split(/\s+/).filter(Boolean).length);
+  const totalWords = segmentWordCounts.reduce((a, b) => a + b, 0);
+  const segmentDurationsMs = segmentWordCounts.map(wc =>
+    Math.round((wc / totalWords) * result.durationMs),
+  );
+
+  // Adjust rounding to match total exactly
+  const sumMs = segmentDurationsMs.reduce((a, b) => a + b, 0);
+  if (sumMs !== result.durationMs) {
+    segmentDurationsMs[segmentDurationsMs.length - 1] += result.durationMs - sumMs;
+  }
+
+  console.log(`  -> Total voice: ${result.durationMs}ms, proportional segments: [${segmentDurationsMs.join(', ')}]`);
+
+  return {
+    path: outputPath,
+    totalDurationMs: result.durationMs,
+    segmentDurationsMs,
+    engineUsed: engine,
+  };
+}
+
+/**
  * Fire all Replicate predictions in parallel, then poll them all.
  * Much faster than sequential (~3s per segment vs ~3s * 8 = 24s).
  */
@@ -272,7 +310,8 @@ export async function generateVoice(
 }
 
 function detectEngine(): Engine {
-  // Chatterbox only — best quality, free
+  // ElevenLabs — best quality. Chatterbox as fallback.
+  if (process.env.eleven_labs_api_key) return 'elevenlabs';
   return 'chatterbox';
 }
 
@@ -344,7 +383,8 @@ async function generateWithOpenAI(
     throw new Error(`OpenAI TTS error ${response.status}: ${error}`);
   }
 
-  return saveAndMeasure(Buffer.from(await response.arrayBuffer()), text, options.outputPath);
+  // OpenAI TTS is already broadcast-quality — skip re-mastering to avoid artifacts
+  return saveAndMeasure(Buffer.from(await response.arrayBuffer()), text, options.outputPath, true);
 }
 
 // --- Chatterbox (Resemble AI via HuggingFace Spaces — FREE) ---
@@ -646,6 +686,7 @@ async function saveAndMeasure(
   buffer: Buffer,
   text: string,
   outputPath: string,
+  skipMastering = false,
 ): Promise<{path: string; durationMs: number}> {
   const outputDir = path.dirname(outputPath);
   if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, {recursive: true});
@@ -655,7 +696,7 @@ async function saveAndMeasure(
     fs.writeFileSync(outputPath, buffer);
   }
 
-  await masterAudio(outputPath);
+  if (!skipMastering) await masterAudio(outputPath);
 
   let durationMs = 0;
   try {

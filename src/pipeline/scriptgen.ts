@@ -4,12 +4,14 @@ import type {ScriptResult} from './script-types';
 import type {TemplateProfile} from './templates';
 import type {DomainPack} from './domain-packs';
 import {
+  buildFeatureEvidencePlan,
   canonicalizeFeatureName,
   canonicalizeIntegrations,
   extractGroundingHints,
   hasGroundingSignal,
   pickGroundedNumber,
   pickGroundedPhrase,
+  type FeatureEvidencePlanItem,
   type GroundingHints,
 } from './grounding';
 
@@ -77,13 +79,14 @@ export async function generateScript(
   const client = new OpenAI({apiKey});
   const maxRetries = options.maxRetries ?? 3;
   const groundingHints = options.groundingHints ?? extractGroundingHints(scraped);
+  const featureEvidencePlan = buildFeatureEvidencePlan(groundingHints, 3);
 
   let parsed: any = null;
   let lastError = 'Unknown script generation error';
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const systemPrompt = buildSystemPrompt(options.templateProfile, options.domainPack);
-    const userPrompt = buildUserPrompt(scraped, options, attempt);
+    const userPrompt = buildUserPrompt(scraped, options, attempt, featureEvidencePlan);
 
     const response = await client.chat.completions.create({
       model: 'gpt-4o',
@@ -106,7 +109,7 @@ export async function generateScript(
       validateParsedScript(candidate);
 
       candidate.narrationSegments = enforceNarrationWordRange(candidate.narrationSegments, options.domainPack);
-      const groundingFix = enforceGrounding(candidate, groundingHints);
+      const groundingFix = enforceGrounding(candidate, groundingHints, featureEvidencePlan);
       candidate = groundingFix;
       candidate.narrationSegments = enforceNarrationWordRange(candidate.narrationSegments, options.domainPack);
       const words = countWords(candidate.narrationSegments.join(' '));
@@ -175,6 +178,7 @@ function buildUserPrompt(
   scraped: ScrapedData,
   options: GenerateScriptOptions,
   attempt: number,
+  featureEvidencePlan: FeatureEvidencePlanItem[],
 ): string {
   const groundingHints = options.groundingHints ?? extractGroundingHints(scraped);
   const feedbackBlock = (options.qualityFeedback && options.qualityFeedback.length > 0)
@@ -201,6 +205,18 @@ Numbers: ${groundingHints.numbers.slice(0, 8).join(', ') || 'none'}
 Integrations seen in source: ${groundingHints.integrationCandidates.slice(0, 8).join(', ') || 'none'}
 Hard requirement: features and narration must be grounded in this source lexicon; do not invent unrelated product nouns.`;
 
+  const evidencePlanBlock = featureEvidencePlan.length > 0
+    ? `\nFeature evidence plan (must follow by slot):
+${featureEvidencePlan.map((item) => `Slot ${item.slot}
+- Canonical feature name: ${item.featureName}
+- Required evidence phrase(s): ${item.requiredPhrases.join(' | ')}
+- Preferred numeric signal: ${item.preferredNumber ?? 'n/a'}`).join('\n')}
+Hard requirements:
+- Keep exactly 3 features in the same slot order.
+- Each feature demo must include at least one required evidence phrase from that slot.
+- Segments 4, 5, 6 must clearly reference feature slots 1, 2, 3 respectively.`
+    : '';
+
   return `Generate a script for this product:\n
 URL: ${scraped.url}
 Domain: ${scraped.domain}
@@ -222,6 +238,7 @@ Colors found: ${scraped.colors.join(', ')}
 Structured hints: ${(scraped.structuredHints ?? []).join(', ')}
 ${packBlock}
 ${groundingBlock}
+${evidencePlanBlock}
 ${feedbackBlock}
 ${retryBlock}`;
 }
@@ -303,7 +320,11 @@ function countWords(value: string): number {
   return value.trim().split(/\s+/).filter(Boolean).length;
 }
 
-function enforceGrounding(candidate: any, groundingHints: GroundingHints): any {
+function enforceGrounding(
+  candidate: any,
+  groundingHints: GroundingHints,
+  featureEvidencePlan: FeatureEvidencePlanItem[],
+): any {
   const next = {
     ...candidate,
     features: Array.isArray(candidate.features) ? candidate.features.map((feature: any) => ({...feature, demoLines: [...(feature.demoLines ?? [])]})) : [],
@@ -315,16 +336,27 @@ function enforceGrounding(candidate: any, groundingHints: GroundingHints): any {
 
   for (let i = 0; i < next.features.length; i++) {
     const feature = next.features[i];
+    const evidence = featureEvidencePlan[i];
     const phrase = pickGroundedPhrase(groundingHints, i);
     const num = pickGroundedNumber(groundingHints, i);
 
     feature.appName = canonicalizeFeatureName(feature?.appName ?? phrase ?? `Feature ${i + 1}`, groundingHints, i);
+    if (evidence && tokenOverlap(feature.appName, evidence.featureName) < 0.34) {
+      feature.appName = evidence.featureName;
+    }
     const dedupeKey = feature.appName.toLowerCase();
     if (usedNames.has(dedupeKey)) {
       const fallback = canonicalizeFeatureName(phrase ?? `Feature ${i + 1}`, groundingHints, i + 1);
       feature.appName = `${fallback} ${i + 1}`.trim();
     }
     usedNames.add(feature.appName.toLowerCase());
+
+    if (!Array.isArray(feature.demoLines)) {
+      feature.demoLines = [];
+    }
+    if (feature.demoLines.length < 2) {
+      feature.demoLines.push(feature.appName);
+    }
 
     const joined = (feature?.demoLines ?? []).join(' ');
     if (!hasGroundingSignal(joined, groundingHints)) {
@@ -335,19 +367,52 @@ function enforceGrounding(candidate: any, groundingHints: GroundingHints): any {
         feature.demoLines.push(groundedLine);
       }
     }
+
+    if (evidence && !containsAnyPhrase(feature.demoLines.join(' '), evidence.requiredPhrases)) {
+      feature.demoLines.push(evidence.requiredPhrases[0]);
+    }
+    if (evidence?.preferredNumber && !/\d/.test(feature.demoLines.join(' '))) {
+      feature.demoLines.push(`${feature.appName}: ${evidence.preferredNumber}`);
+    }
   }
 
   next.integrations = canonicalizeIntegrations(next.integrations, groundingHints, [], 12);
 
-  for (let i = 3; i <= 6; i++) {
+  for (let i = 3; i <= 5; i++) {
     if (!next.narrationSegments[i]) continue;
-    if (!hasGroundingSignal(next.narrationSegments[i], groundingHints)) {
-      const phrase = pickGroundedPhrase(groundingHints, i);
-      if (phrase) {
-        next.narrationSegments[i] = `${next.narrationSegments[i]} ${phrase}.`.trim();
+    const featureIdx = i - 3;
+    const feature = next.features[featureIdx];
+    const evidence = featureEvidencePlan[featureIdx];
+    if (!hasGroundingSignal(next.narrationSegments[i], groundingHints) || (evidence && !containsAnyPhrase(next.narrationSegments[i], evidence.requiredPhrases))) {
+      const inject = evidence?.requiredPhrases[0] ?? pickGroundedPhrase(groundingHints, i);
+      if (inject) {
+        next.narrationSegments[i] = `${next.narrationSegments[i]} ${inject}.`.trim();
       }
+    }
+    if (feature && tokenOverlap(next.narrationSegments[i], feature.appName) < 0.2) {
+      next.narrationSegments[i] = `${next.narrationSegments[i]} Feature: ${feature.appName}.`.trim();
     }
   }
 
   return next;
+}
+
+function containsAnyPhrase(text: string, phrases: string[]): boolean {
+  const corpus = text.toLowerCase();
+  for (const phrase of phrases) {
+    if (!phrase.trim()) continue;
+    if (corpus.includes(phrase.toLowerCase())) return true;
+  }
+  return false;
+}
+
+function tokenOverlap(a: string, b: string): number {
+  const aTokens = new Set(a.toLowerCase().split(/\s+/).filter(Boolean));
+  const bTokens = new Set(b.toLowerCase().split(/\s+/).filter(Boolean));
+  if (aTokens.size === 0 || bTokens.size === 0) return 0;
+  let common = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) common += 1;
+  }
+  return common / Math.max(aTokens.size, bTokens.size);
 }

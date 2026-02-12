@@ -76,6 +76,7 @@ Generated artifacts land in `out/`:
 ## Grounding
 
 - The pipeline extracts source grounding hints (`terms`, `phrases`, `featureNameCandidates`, `numbers`, `integrationCandidates`) from scraped content.
+- The generator builds a slot-based feature evidence plan from grounded hints and enforces it during generation, fallback, and relevance guard.
 - Script generation prompt and post-processing use grounding hints to reduce off-domain wording.
 - Feature names are canonicalized against grounded candidates; noisy labels fall back to synthesized term-based names.
 - Integrations are canonicalized through a known-tool resolver + alias mapping.

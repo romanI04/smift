@@ -159,3 +159,25 @@
   - `npx tsc --noEmit` pass
   - `npm run eval:packs` pass (`14/14`)
   - `npm run eval:real:smoke` pass (`100%` pack accuracy on `10/10`, `90%` quality pass rate).
+
+### M14 - Evidence-Backed Feature Planning (Engine Quality)
+
+- Added a feature evidence plan primitive in grounding layer (`buildFeatureEvidencePlan`):
+  - each feature slot now has a canonical source-backed name, required phrase(s), and preferred number (when available).
+- Wired evidence plan into model generation prompt (`scriptgen`):
+  - explicit slot-by-slot evidence instructions now constrain feature naming and demo content.
+- Strengthened post-generation grounding enforcement:
+  - feature names are aligned to evidence slots when drift is detected.
+  - demo lines are force-grounded with required source phrases and numeric signals.
+  - feature narration segments (4-6) are aligned with slot feature references.
+- Updated deterministic fallback builder to use the same evidence plan so fallback scripts stay source-specific.
+- Updated render relevance guard to enforce evidence phrases/numbers and narration-feature alignment before output.
+- Added quality checks for evidence alignment:
+  - per-feature evidence phrase presence
+  - feature-name drift from slot canonical name
+  - feature narration segment reference clarity.
+- Fixed feature token sanitizer bug that corrupted words (`customer` -> `cus`) and degraded feature names.
+- Validation:
+  - `npx tsc --noEmit` pass
+  - `npm run eval:packs` pass (`14/14`)
+  - `npm run eval:real:smoke` pass (`10/10` pack accuracy, `10/10` quality pass, `0` errors).

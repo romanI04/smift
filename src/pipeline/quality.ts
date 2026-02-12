@@ -3,6 +3,7 @@ import type {ScriptResult} from './script-types';
 import type {TemplateProfile} from './templates';
 import type {DomainPack} from './domain-packs';
 import {
+  buildFeatureEvidencePlan,
   canonicalizeIntegrations,
   hasGroundingSignal,
   summarizeGroundingUsage,
@@ -184,6 +185,7 @@ export function scoreScriptQuality(args: ScoreArgs): QualityReport {
 
   if (groundingHints) {
     const grounding = summarizeGroundingUsage(script, groundingHints);
+    const evidencePlan = buildFeatureEvidencePlan(groundingHints, 3);
     notes.push(`Grounding coverage: ${grounding.coverage} (${grounding.matchedTerms}/${grounding.totalTerms} terms, ${grounding.matchedPhrases}/${grounding.totalPhrases} phrases).`);
 
     if (grounding.coverage < 0.16) {
@@ -218,6 +220,28 @@ export function scoreScriptQuality(args: ScoreArgs): QualityReport {
     if (grounding.totalNumbers > 0 && numberedFeatureCount === 0) {
       warnings.push('Feature demos should include at least one numeric source signal.');
       score -= 4;
+    }
+
+    for (let i = 0; i < Math.min(script.features.length, evidencePlan.length); i++) {
+      const evidence = evidencePlan[i];
+      const featureText = [
+        script.features[i].appName,
+        script.features[i].caption,
+        ...script.features[i].demoLines,
+      ].join(' ');
+      if (!containsAnyPhrase(featureText, evidence.requiredPhrases)) {
+        warnings.push(`Feature ${i + 1} misses required source evidence phrase.`);
+        score -= 4;
+      }
+      if (tokenOverlap(script.features[i].appName, evidence.featureName) < 0.3) {
+        warnings.push(`Feature ${i + 1} name drifts from source-backed feature naming.`);
+        score -= 3;
+      }
+      const segment = script.narrationSegments[3 + i] ?? '';
+      if (!containsTerm(segment, script.features[i].appName) && tokenOverlap(segment, script.features[i].appName) < 0.12) {
+        warnings.push(`Narration segment ${4 + i} does not clearly reference feature ${i + 1}.`);
+        score -= 2;
+      }
     }
   }
 
@@ -281,6 +305,26 @@ function containsTerm(haystack: string, term: string): boolean {
   if (!normalized) return false;
   const phrase = normalized.split(/\s+/).map((part) => escapeRegex(part)).join('\\s+');
   return new RegExp(`(^|\\W)${phrase}(?=\\W|$)`, 'i').test(haystack.toLowerCase());
+}
+
+function containsAnyPhrase(text: string, phrases: string[]): boolean {
+  const corpus = text.toLowerCase();
+  for (const phrase of phrases) {
+    if (!phrase.trim()) continue;
+    if (corpus.includes(phrase.toLowerCase())) return true;
+  }
+  return false;
+}
+
+function tokenOverlap(a: string, b: string): number {
+  const aTokens = new Set(a.toLowerCase().split(/\s+/).filter(Boolean));
+  const bTokens = new Set(b.toLowerCase().split(/\s+/).filter(Boolean));
+  if (aTokens.size === 0 || bTokens.size === 0) return 0;
+  let common = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) common += 1;
+  }
+  return common / Math.max(aTokens.size, bTokens.size);
 }
 
 function escapeRegex(input: string): string {

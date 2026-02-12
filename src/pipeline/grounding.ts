@@ -9,6 +9,13 @@ export interface GroundingHints {
   integrationCandidates: string[];
 }
 
+export interface FeatureEvidencePlanItem {
+  slot: number;
+  featureName: string;
+  requiredPhrases: string[];
+  preferredNumber?: string;
+}
+
 export interface GroundingSummary {
   coverage: number;
   matchedTerms: number;
@@ -116,6 +123,46 @@ export function pickGroundedNumber(hints: GroundingHints, index: number): string
 export function pickGroundedIntegration(hints: GroundingHints, index: number): string | null {
   if (hints.integrationCandidates.length === 0) return null;
   return hints.integrationCandidates[index % hints.integrationCandidates.length];
+}
+
+export function buildFeatureEvidencePlan(hints: GroundingHints, count = 3): FeatureEvidencePlanItem[] {
+  const slots = Math.max(1, count);
+  const phrasePool = dedupeByNormalized([
+    ...hints.featureNameCandidates,
+    ...hints.phrases,
+  ])
+    .map((phrase) => normalizeWhitespace(phrase))
+    .filter((phrase) => phrase.length >= 8)
+    .slice(0, 24);
+
+  const plan: FeatureEvidencePlanItem[] = [];
+  const usedNames = new Set<string>();
+  for (let i = 0; i < slots; i++) {
+    const sourceName = phrasePool[i] ?? pickGroundedPhrase(hints, i) ?? `Feature ${i + 1}`;
+    let featureName = canonicalizeFeatureName(sourceName, hints, i);
+    if (usedNames.has(featureName.toLowerCase())) {
+      const synthesized = synthesizeFeatureName(hints, i);
+      featureName = usedNames.has(synthesized.toLowerCase()) ? `${synthesized} ${i + 1}` : synthesized;
+    }
+    usedNames.add(featureName.toLowerCase());
+    const requiredPhrases = dedupeByNormalized([
+      phrasePool[i] ?? '',
+      phrasePool[(i + slots) % Math.max(1, phrasePool.length)] ?? '',
+      featureName,
+    ]
+      .map((phrase) => phrase.replace(/[.!?;:]+$/, '').trim())
+      .filter((phrase) => phrase.length >= 6))
+      .slice(0, 2);
+
+    plan.push({
+      slot: i + 1,
+      featureName,
+      requiredPhrases: requiredPhrases.length > 0 ? requiredPhrases : [featureName],
+      ...(pickGroundedNumber(hints, i) ? {preferredNumber: pickGroundedNumber(hints, i) as string} : {}),
+    });
+  }
+
+  return plan;
 }
 
 export function canonicalizeFeatureName(raw: string, hints: GroundingHints, index: number): string {
@@ -362,16 +409,6 @@ function sanitizeFeatureToken(token: string): string {
   for (const connector of connectors) {
     if (lower.endsWith(connector) && lower.length - connector.length >= 3) {
       lower = lower.slice(0, -connector.length);
-    }
-  }
-
-  for (const connector of connectors) {
-    const idx = lower.indexOf(connector);
-    if (idx > 2 && idx < lower.length - connector.length - 2) {
-      const left = lower.slice(0, idx);
-      const right = lower.slice(idx + connector.length);
-      lower = left.length >= right.length ? left : right;
-      break;
     }
   }
 

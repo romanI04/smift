@@ -4,11 +4,13 @@ import type {ScriptResult} from './script-types';
 import type {TemplateProfile} from './templates';
 import type {DomainPack, DomainPackId, FeatureIconId} from './domain-packs';
 import {
+  buildFeatureEvidencePlan,
   canonicalizeFeatureName,
   canonicalizeIntegrations,
   extractGroundingHints,
   pickGroundedNumber,
   pickGroundedPhrase,
+  type FeatureEvidencePlanItem,
   type GroundingHints,
 } from './grounding';
 
@@ -123,8 +125,13 @@ function buildHooks(packId: DomainPackId): {hookLine1: string; hookLine2: string
 }
 
 function buildFeatures(scraped: ScrapedData, domainPack: DomainPack, groundingHints: GroundingHints): Feature[] {
+  const evidencePlan = buildFeatureEvidencePlan(groundingHints, 3);
   const groundedSeeds = groundingHints.phrases.slice(0, 8);
-  const seeds = [...groundedSeeds, ...scraped.features.filter((f) => f.length > 20)].slice(0, 12);
+  const seeds = [
+    ...evidencePlan.flatMap((item) => item.requiredPhrases),
+    ...groundedSeeds,
+    ...scraped.features.filter((f) => f.length > 20),
+  ].slice(0, 14);
   const selected = pickDistinctSeeds(seeds, 3);
 
   while (selected.length < 3) {
@@ -132,11 +139,12 @@ function buildFeatures(scraped: ScrapedData, domainPack: DomainPack, groundingHi
   }
 
   return selected.map((seed, index) => {
+    const evidence = evidencePlan[index];
     const icon = inferIcon(seed, domainPack.allowedIcons);
-    const groundedPhrase = pickGroundedPhrase(groundingHints, index);
+    const groundedPhrase = evidence?.requiredPhrases[0] ?? pickGroundedPhrase(groundingHints, index);
     const caption = captionFromSeed(groundedPhrase ?? seed);
-    const appName = canonicalizeFeatureName(groundedPhrase ?? seed, groundingHints, index);
-    const demoLines = demoLinesFromSeed(seed, index, domainPack, groundingHints);
+    const appName = evidence?.featureName ?? canonicalizeFeatureName(groundedPhrase ?? seed, groundingHints, index);
+    const demoLines = demoLinesFromSeed(seed, index, domainPack, groundingHints, evidence);
     return {
       icon,
       appName,
@@ -204,11 +212,17 @@ function captionFromSeed(seed: string): string {
   return words.join(' ');
 }
 
-function demoLinesFromSeed(seed: string, index: number, pack: DomainPack, groundingHints: GroundingHints): string[] {
-  const groundedPhrase = pickGroundedPhrase(groundingHints, index) ?? seed;
+function demoLinesFromSeed(
+  seed: string,
+  index: number,
+  pack: DomainPack,
+  groundingHints: GroundingHints,
+  evidence?: FeatureEvidencePlanItem,
+): string[] {
+  const groundedPhrase = evidence?.requiredPhrases[0] ?? pickGroundedPhrase(groundingHints, index) ?? seed;
   const firstLine = groundedPhrase.length > 64 ? `${groundedPhrase.slice(0, 61)}...` : groundedPhrase;
   const fields = pack.concreteFields;
-  const groundedNumber = pickGroundedNumber(groundingHints, index);
+  const groundedNumber = evidence?.preferredNumber ?? pickGroundedNumber(groundingHints, index);
 
   return [
     firstLine,

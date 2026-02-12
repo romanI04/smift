@@ -2,6 +2,7 @@ import type {ScriptResult} from './script-types';
 import type {ScrapedData} from './scraper';
 import type {DomainPack} from './domain-packs';
 import {
+  buildFeatureEvidencePlan,
   canonicalizeFeatureName,
   canonicalizeIntegrations,
   hasGroundingSignal,
@@ -34,6 +35,7 @@ export function applyRenderRelevanceGuard(args: {
 
   const actions: string[] = [];
   const warnings: string[] = [];
+  const evidencePlan = buildFeatureEvidencePlan(groundingHints, Math.max(3, next.features.length));
   const forbiddenRegexes = domainPack.forbiddenTerms
     .map((term) => term.trim())
     .filter(Boolean)
@@ -43,8 +45,12 @@ export function applyRenderRelevanceGuard(args: {
 
   next.features = next.features.map((feature, idx) => {
     const updated = {...feature, demoLines: [...feature.demoLines]};
+    const evidence = evidencePlan[idx];
     const canonicalName = canonicalizeFeatureName(updated.appName || `Feature ${idx + 1}`, groundingHints, idx);
-    if (canonicalName !== updated.appName) {
+    if (evidence && tokenOverlap(canonicalName, evidence.featureName) < 0.34) {
+      updated.appName = evidence.featureName;
+      actions.push(`Guard aligned feature name ${idx + 1} to evidence plan.`);
+    } else if (canonicalName !== updated.appName) {
       updated.appName = canonicalName;
       actions.push(`Guard normalized feature name ${idx + 1}.`);
     }
@@ -81,10 +87,27 @@ export function applyRenderRelevanceGuard(args: {
       }
     }
 
+    if (evidence && !containsAnyPhrase(updated.demoLines.join(' '), evidence.requiredPhrases)) {
+      updated.demoLines.push(evidence.requiredPhrases[0]);
+      actions.push(`Guard injected evidence phrase for feature ${idx + 1}.`);
+    }
+    if (evidence?.preferredNumber && !/\d/.test(updated.demoLines.join(' '))) {
+      updated.demoLines.push(`${updated.appName}: ${evidence.preferredNumber}`);
+      actions.push(`Guard injected evidence number for feature ${idx + 1}.`);
+    }
+
     const dedupeKey = updated.appName.toLowerCase();
     if (usedAppNames.has(dedupeKey)) {
       const suffix = pickGroundedPhrase(groundingHints, idx + 1)?.split(/\s+/)[0] ?? String(idx + 1);
       updated.appName = `${updated.appName} ${suffix}`.trim();
+      let uniqueKey = updated.appName.toLowerCase();
+      if (usedAppNames.has(uniqueKey)) {
+        updated.appName = `${updated.appName} ${idx + 1}`.trim();
+        uniqueKey = updated.appName.toLowerCase();
+      }
+      if (usedAppNames.has(uniqueKey)) {
+        updated.appName = `${updated.appName}-${idx + 1}`.trim();
+      }
       actions.push(`Guard de-duplicated feature name ${idx + 1}.`);
     }
     usedAppNames.add(updated.appName.toLowerCase());
@@ -125,6 +148,24 @@ export function applyRenderRelevanceGuard(args: {
     actions.push('Guard aligned CTA domain to source domain.');
   }
 
+  for (let i = 0; i < Math.min(3, next.features.length); i++) {
+    const segmentIndex = 3 + i;
+    const segment = next.narrationSegments[segmentIndex];
+    const feature = next.features[i];
+    const evidence = evidencePlan[i];
+    if (!segment || !feature) continue;
+
+    if (tokenOverlap(segment, feature.appName) < 0.12) {
+      next.narrationSegments[segmentIndex] = `${segment} Feature: ${feature.appName}.`.trim();
+      actions.push(`Guard aligned narration segment ${segmentIndex + 1} with feature ${i + 1}.`);
+    }
+
+    if (evidence && !containsAnyPhrase(next.narrationSegments[segmentIndex], evidence.requiredPhrases)) {
+      next.narrationSegments[segmentIndex] = `${next.narrationSegments[segmentIndex]} ${evidence.requiredPhrases[0]}.`.trim();
+      actions.push(`Guard injected evidence phrase into narration segment ${segmentIndex + 1}.`);
+    }
+  }
+
   return {script: next, actions, warnings};
 }
 
@@ -157,4 +198,24 @@ function normalizeDomain(urlOrDomain: string): string {
 
 function escapeRegex(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function containsAnyPhrase(text: string, phrases: string[]): boolean {
+  const corpus = text.toLowerCase();
+  for (const phrase of phrases) {
+    if (!phrase.trim()) continue;
+    if (corpus.includes(phrase.toLowerCase())) return true;
+  }
+  return false;
+}
+
+function tokenOverlap(a: string, b: string): number {
+  const aTokens = new Set(a.toLowerCase().split(/\s+/).filter(Boolean));
+  const bTokens = new Set(b.toLowerCase().split(/\s+/).filter(Boolean));
+  if (aTokens.size === 0 || bTokens.size === 0) return 0;
+  let common = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) common += 1;
+  }
+  return common / Math.max(aTokens.size, bTokens.size);
 }

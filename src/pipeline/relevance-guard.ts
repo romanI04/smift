@@ -35,7 +35,7 @@ export function applyRenderRelevanceGuard(args: {
 
   const actions: string[] = [];
   const warnings: string[] = [];
-  const evidencePlan = buildFeatureEvidencePlan(groundingHints, Math.max(3, next.features.length));
+  const evidencePlan = buildFeatureEvidencePlan(groundingHints, Math.max(3, next.features.length), domainPack.id);
   const forbiddenRegexes = domainPack.forbiddenTerms
     .map((term) => term.trim())
     .filter(Boolean)

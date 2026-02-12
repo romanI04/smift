@@ -42,10 +42,12 @@
 
 - `extractGroundingHints()` should run once per scrape and be passed through generation, fallback, autofix, and quality scoring.
 - `buildFeatureEvidencePlan()` is now the canonical way to derive slot-level feature constraints. Reuse it in scriptgen, fallback, and guard to avoid drift.
+- Pass `domainPack.id` into `buildFeatureEvidencePlan()` for sparse pages; pack-aware fallback names significantly improve feature relevance.
 - If scripts feel generic, inspect `quality.grounding.coverage` first; low coverage usually means weak source extraction or over-aggressive prompt edits.
 - Feature scene visuals are now pack-driven. If a pack looks off, start in `src/scenes/FeatureDemo.tsx` (`DOMAIN_VISUAL_THEMES` + `selectMockup`) before touching pipeline prompts.
 - Feature naming is now canonicalized in `grounding.ts`; avoid adding ad-hoc name cleanup logic inside scriptgen/autofix.
 - Avoid aggressive substring connector stripping in token cleanup; it can corrupt domain words (`customer` -> `cus`) and poison feature names.
+- Sparse pages need a special-case allowance for high-quality fallback labels when phrase candidates are empty.
 - Use `canonicalizeIntegrations()` everywhere integrations are mutated. Mixing raw + canonical tool names increases false warnings.
 - Render relevance guard runs post-generation. If you need raw model behavior for debugging, run with `--no-relevance-guard`.
 - Guard may be intentionally skipped if it regresses quality gates; check `quality.relevanceGuard` in output JSON for rollback details.

@@ -68,7 +68,13 @@ export function buildFallbackScript(
 
 function inferBrandName(scraped: ScrapedData): string {
   const titleHead = scraped.title.split(/[|\-:]/)[0]?.trim();
-  if (titleHead && titleHead.length >= 2 && titleHead.length <= 42) return titleHead;
+  if (titleHead && titleHead.length >= 2 && titleHead.length <= 42) {
+    const words = titleHead.split(/\s+/).filter(Boolean);
+    const looksLikeTagline = words.length > 4
+      || /^(the|a|an)\b/i.test(titleHead)
+      || /\b(company|platform|software|solution)\b/i.test(titleHead);
+    if (!looksLikeTagline) return titleHead;
+  }
 
   const domainCore = scraped.domain.replace(/^www\./, '').split('.')[0] ?? 'Brand';
   return domainCore.charAt(0).toUpperCase() + domainCore.slice(1);
@@ -125,7 +131,7 @@ function buildHooks(packId: DomainPackId): {hookLine1: string; hookLine2: string
 }
 
 function buildFeatures(scraped: ScrapedData, domainPack: DomainPack, groundingHints: GroundingHints): Feature[] {
-  const evidencePlan = buildFeatureEvidencePlan(groundingHints, 3);
+  const evidencePlan = buildFeatureEvidencePlan(groundingHints, 3, domainPack.id);
   const groundedSeeds = groundingHints.phrases.slice(0, 8);
   const seeds = [
     ...evidencePlan.flatMap((item) => item.requiredPhrases),

@@ -79,7 +79,7 @@ export async function generateScript(
   const client = new OpenAI({apiKey});
   const maxRetries = options.maxRetries ?? 3;
   const groundingHints = options.groundingHints ?? extractGroundingHints(scraped);
-  const featureEvidencePlan = buildFeatureEvidencePlan(groundingHints, 3);
+  const featureEvidencePlan = buildFeatureEvidencePlan(groundingHints, 3, options.domainPack?.id ?? 'general');
 
   let parsed: any = null;
   let lastError = 'Unknown script generation error';

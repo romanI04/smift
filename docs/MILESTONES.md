@@ -181,3 +181,18 @@
   - `npx tsc --noEmit` pass
   - `npm run eval:packs` pass (`14/14`)
   - `npm run eval:real:smoke` pass (`10/10` pack accuracy, `10/10` quality pass, `0` errors).
+
+### M15 - Sparse-Site Quality Hardening
+
+- Improved sparse-grounding behavior in `grounding.ts`:
+  - `buildFeatureEvidencePlan()` now accepts pack id and can synthesize slot evidence when site copy is minimal.
+  - added pack-specific sparse fallback feature names (e.g. B2B: `Support Inbox`, `Customer Timeline`, `Agent Routing`).
+  - expanded feature noise filtering to remove marketing fluff terms (`leading`, `highest`, etc.) and generic `company`.
+- Updated canonical feature-name behavior:
+  - allow strong sparse fallback labels even when direct phrase candidates are absent.
+  - preserves pack fallback names instead of collapsing to weak token pairs.
+- Improved fallback brand extraction:
+  - ignore tagline-like title heads (`The ... company`) and fall back to domain brand in sparse pages.
+- Validation:
+  - `intercom.com` now produces stable sparse features (`Support Inbox`, `Customer Timeline`, `Agent Routing`) with quality pass.
+  - `npm run eval:real:smoke`: `100%` pack accuracy (`10/10`), `100%` pass rate (`10/10`), `0` errors.

@@ -1,5 +1,6 @@
 import type {ScrapedData} from './scraper';
 import type {ScriptResult} from './script-types';
+import type {DomainPackId} from './domain-packs';
 
 export interface GroundingHints {
   terms: string[];
@@ -32,13 +33,14 @@ const STOP_WORDS = new Set([
   'has', 'had', 'into', 'over', 'under', 'across', 'about', 'their', 'them', 'they', 'its', 'more', 'less', 'than',
   'not', 'all', 'one', 'two', 'three', 'best', 'top', 'new', 'now', 'can', 'get', 'use', 'used', 'using', 'app',
   'apps', 'platform', 'product', 'solution', 'services', 'service', 'build', 'built', 'help', 'helps', 'make',
-  'made', 'teams', 'team', 'users', 'user',
+  'made', 'teams', 'team', 'users', 'user', 'company', 'companies',
 ]);
 
 const FEATURE_NOISE_WORDS = new Set([
   'all', 'one', 'next', 'nextbig', 'best', 'future', 'today', 'available', 'line', 'behind', 'they', 'their',
   'every', 'across', 'more', 'less', 'great', 'better', 'new', 'modern', 'ultimate',
   'here', 'there', 'forever', 'everyone', 'mers', 'thing', 'things',
+  'leading', 'highest', 'trusted', 'deliver', 'delivering', 'powerful', 'smarter',
 ]);
 
 const KNOWN_TOOLS = [
@@ -68,6 +70,20 @@ const INTEGRATION_ALIAS_MAP: Record<string, string> = {
 };
 
 const TOOL_KEY_TO_CANONICAL = buildToolDictionary();
+const SPARSE_PACK_FALLBACK_NAMES: Record<DomainPackId, string[]> = {
+  general: ['Workflow Signals', 'Execution Visibility', 'Action Pipeline'],
+  'b2b-saas': ['Support Inbox', 'Customer Timeline', 'AI Agent Routing'],
+  devtools: ['Build Health', 'Release Pipeline', 'Incident Triage'],
+  'ecommerce-retail': ['Catalog Performance', 'Checkout Flow', 'Retention Campaigns'],
+  fintech: ['Risk Monitoring', 'Transaction Controls', 'Settlement Visibility'],
+  gaming: ['Meta Tracking', 'Comp Guidance', 'Patch Readiness'],
+  'media-creator': ['Content Pipeline', 'Audience Signals', 'Publishing Analytics'],
+  education: ['Learner Progress', 'Course Milestones', 'Assessment Signals'],
+  'real-estate': ['Listing Pipeline', 'Offer Tracking', 'Close Readiness'],
+  'travel-hospitality': ['Booking Ops', 'Guest Journey', 'Property Readiness'],
+  'logistics-ops': ['Route Tracking', 'Dispatch Visibility', 'ETA Reliability'],
+  'social-community': ['Community Health', 'Moderation Queue', 'Engagement Signals'],
+};
 
 export function extractGroundingHints(scraped: ScrapedData): GroundingHints {
   const text = [
@@ -125,15 +141,28 @@ export function pickGroundedIntegration(hints: GroundingHints, index: number): s
   return hints.integrationCandidates[index % hints.integrationCandidates.length];
 }
 
-export function buildFeatureEvidencePlan(hints: GroundingHints, count = 3): FeatureEvidencePlanItem[] {
+export function buildFeatureEvidencePlan(
+  hints: GroundingHints,
+  count = 3,
+  packId: DomainPackId = 'general',
+): FeatureEvidencePlanItem[] {
   const slots = Math.max(1, count);
-  const phrasePool = dedupeByNormalized([
+  let phrasePool = dedupeByNormalized([
     ...hints.featureNameCandidates,
     ...hints.phrases,
   ])
     .map((phrase) => normalizeWhitespace(phrase))
     .filter((phrase) => phrase.length >= 8)
     .slice(0, 24);
+
+  if (isSparseGrounding(hints) || phrasePool.length < slots + 2) {
+    const sparseSynth = synthesizeSparseFeaturePhrases(hints, slots * 4);
+    phrasePool = dedupeByNormalized([
+      ...phrasePool,
+      ...SPARSE_PACK_FALLBACK_NAMES[packId],
+      ...sparseSynth,
+    ]).slice(0, 28);
+  }
 
   const plan: FeatureEvidencePlanItem[] = [];
   const usedNames = new Set<string>();
@@ -169,10 +198,13 @@ export function canonicalizeFeatureName(raw: string, hints: GroundingHints, inde
   const candidate = cleanupFeatureLabel(raw);
   const similarity = bestLabelSimilarity(candidate, hints.featureNameCandidates);
   const specificity = labelSpecificityScore(candidate, hints);
+  const sparseNoPhraseGrounding = hints.featureNameCandidates.length === 0 && hints.phrases.length === 0;
   if (
     isStrongFeatureLabel(candidate)
-    && hasGroundingSignal(candidate, hints)
-    && similarity >= 0.34
+    && (
+      (hasGroundingSignal(candidate, hints) && (hints.featureNameCandidates.length === 0 || similarity >= 0.34))
+      || sparseNoPhraseGrounding
+    )
     && specificity >= 2
   ) {
     return candidate;
@@ -475,6 +507,26 @@ function synthesizeFeatureName(hints: GroundingHints, index: number): string {
     .slice(0, 2)
     .join(' ');
   return toTitleCase(composed || `Feature ${index + 1}`);
+}
+
+function synthesizeSparseFeaturePhrases(hints: GroundingHints, limit: number): string[] {
+  const baseTerms = hints.terms
+    .filter((term) => term.length >= 4 && !STOP_WORDS.has(term) && !FEATURE_NOISE_WORDS.has(term))
+    .slice(0, 12);
+  const out: string[] = [];
+  const suffixes = ['Workflows', 'Signals', 'Insights', 'Automation', 'Operations', 'Tracking'];
+  for (let i = 0; i < baseTerms.length; i++) {
+    const first = toTitleCase(baseTerms[i]);
+    const second = baseTerms[(i + 1) % baseTerms.length];
+    if (second) out.push(`${first} ${toTitleCase(second)}`);
+    out.push(`${first} ${suffixes[i % suffixes.length]}`);
+    if (out.length >= limit) break;
+  }
+  return dedupeByNormalized(out).slice(0, limit);
+}
+
+function isSparseGrounding(hints: GroundingHints): boolean {
+  return hints.featureNameCandidates.length < 2 && hints.phrases.length < 2;
 }
 
 function hasWholePhrase(haystackLower: string, phraseLower: string): boolean {

@@ -185,7 +185,7 @@ export function scoreScriptQuality(args: ScoreArgs): QualityReport {
 
   if (groundingHints) {
     const grounding = summarizeGroundingUsage(script, groundingHints);
-    const evidencePlan = buildFeatureEvidencePlan(groundingHints, 3);
+    const evidencePlan = buildFeatureEvidencePlan(groundingHints, 3, domainPack.id);
     notes.push(`Grounding coverage: ${grounding.coverage} (${grounding.matchedTerms}/${grounding.totalTerms} terms, ${grounding.matchedPhrases}/${grounding.totalPhrases} phrases).`);
 
     if (grounding.coverage < 0.16) {

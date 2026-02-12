@@ -256,3 +256,20 @@
 - Validation:
   - `npm run eval:scraper`: `100%` (`5/5`)
   - `npm run eval:real:smoke`: `100%` pack accuracy (`10/10`), `100%` pass rate (`10/10`).
+
+### M20 - Hook Quality Hardening (Roadmap Day 4-5)
+
+- Added source-grounded hook enforcement in `scriptgen` post-processing:
+  - hook lines are normalized to 2-4 words and aligned to evidence/grounding terms.
+  - generic hype hooks are replaced with domain-aware alternatives.
+- Improved fallback hook generation in `fallback-script`:
+  - hook lines now use grounding phrases where available.
+  - avoids fallback to weak generic text when model calls fail.
+- Improved autofix hook normalization:
+  - replaces generic fillers (`right now`) with grounded/domain-aware terms.
+- Added hook quality rubric checks in `quality.ts`:
+  - penalties for hype-only hook wording
+  - penalty when no hook line is source-grounded.
+- Validation:
+  - `npm run eval:scraper`: `100%` (`5/5`)
+  - `npm run eval:real:smoke`: `100%` pack accuracy (`10/10`), `100%` pass rate (`10/10`).

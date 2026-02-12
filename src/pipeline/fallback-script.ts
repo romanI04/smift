@@ -27,7 +27,7 @@ export function buildFallbackScript(
   const accentColor = pickAccentColor(scraped.colors, brandColor);
 
   const tagline = makeTagline(scraped);
-  const hooks = buildHooks(domainPack.id);
+  const hooks = buildHooks(domainPack.id, groundingHints);
 
   const features = buildFeatures(scraped, domainPack, groundingHints);
   const integrations = buildIntegrations(scraped, domainPack, groundingHints);
@@ -112,7 +112,7 @@ function makeTagline(scraped: ScrapedData): string {
   return words.join(' ');
 }
 
-function buildHooks(packId: DomainPackId): {hookLine1: string; hookLine2: string; hookKeyword: string} {
+function buildHooks(packId: DomainPackId, groundingHints: GroundingHints): {hookLine1: string; hookLine2: string; hookKeyword: string} {
   const map: Record<DomainPackId, {hookLine1: string; hookLine2: string; hookKeyword: string}> = {
     general: {hookLine1: 'your process', hookLine2: 'loses momentum', hookKeyword: 'fix the flow'},
     'b2b-saas': {hookLine1: 'your workflows', hookLine2: 'are fragmented', hookKeyword: 'ship clearer'},
@@ -127,7 +127,14 @@ function buildHooks(packId: DomainPackId): {hookLine1: string; hookLine2: string
     'logistics-ops': {hookLine1: 'your operations', hookLine2: 'lose timing', hookKeyword: 'move reliably'},
     'social-community': {hookLine1: 'your community', hookLine2: 'needs structure', hookKeyword: 'raise engagement'},
   };
-  return map[packId];
+  const base = map[packId];
+  const hookLine1 = toHookWords(pickGroundedPhrase(groundingHints, 0) ?? base.hookLine1, 3) || base.hookLine1;
+  const hookLine2 = toHookWords(pickGroundedPhrase(groundingHints, 1) ?? base.hookLine2, 3) || base.hookLine2;
+  const keywordSource = pickGroundedPhrase(groundingHints, 2);
+  const hookKeyword = keywordSource
+    ? toHookWords(`${keywordSource} ${base.hookKeyword}`, 4)
+    : base.hookKeyword;
+  return {hookLine1, hookLine2, hookKeyword: hookKeyword || base.hookKeyword};
 }
 
 function buildFeatures(scraped: ScrapedData, domainPack: DomainPack, groundingHints: GroundingHints): Feature[] {
@@ -386,4 +393,15 @@ function defaultSeedForPack(packId: DomainPackId, index: number): string {
   };
 
   return defaults[packId][index] ?? defaults.general[index] ?? 'Execution signal update';
+}
+
+function toHookWords(value: string, maxWords: number): string {
+  const tokens = value
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, maxWords);
+  if (tokens.length === 0) return '';
+  if (tokens.length === 1) return `${tokens[0]} signal`;
+  return tokens.join(' ');
 }

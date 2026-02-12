@@ -114,8 +114,10 @@ Scope:
   - Step 1: blocked-page classifier in scraper.
   - Step 2: metadata-first fallback extraction for blocked pages.
   - Step 3: blocked-page fixtures + scraper eval runner.
+  - Step 4: first-5-second hook grounding improvements.
+  - Step 5: hook quality rubric and scoring penalties.
 - Next up:
-  - Step 4: improve first-5-second hook quality.
+  - Step 6: implement script section regeneration API.
 
 ## 5) Non-Negotiable Prioritization Rules
 

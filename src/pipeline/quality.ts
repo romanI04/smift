@@ -70,6 +70,19 @@ export function scoreScriptQuality(args: ScoreArgs): QualityReport {
       score -= 3;
     }
   });
+  const hookCorpus = [script.hookLine1, script.hookLine2, script.hookKeyword].join(' ');
+  if (/right now|game changer|next level|all in one|revolutionary/i.test(hookCorpus)) {
+    warnings.push('Hook uses generic hype wording; use source-grounded language.');
+    score -= 4;
+  }
+  if (groundingHints) {
+    const hasGroundedHook = [script.hookLine1, script.hookLine2, script.hookKeyword]
+      .some((line) => hasGroundingSignal(line, groundingHints));
+    if (!hasGroundedHook) {
+      warnings.push('Hook lacks source-grounded terminology.');
+      score -= 4;
+    }
+  }
 
   const ctaDomain = normalizeDomain(script.ctaUrl);
   const scrapedDomain = normalizeDomain(scraped.domain);

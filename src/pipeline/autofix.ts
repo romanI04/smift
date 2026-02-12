@@ -45,8 +45,9 @@ export function autoFixScriptQuality(
     'hookLine2',
     'hookKeyword',
   ];
-  for (const key of hookLines) {
-    const fixed = normalizeHookLine(next[key]);
+  for (let i = 0; i < hookLines.length; i++) {
+    const key = hookLines[i];
+    const fixed = normalizeHookLine(next[key], i, groundingHints, domainPack);
     if (fixed !== next[key]) {
       next[key] = fixed;
       actions.push(`Normalized ${key} to 2-4 words.`);
@@ -162,18 +163,37 @@ export function autoFixScriptQuality(
   return {script: next, actions};
 }
 
-function normalizeHookLine(line: string): string {
+function normalizeHookLine(
+  line: string,
+  index: number,
+  groundingHints: GroundingHints,
+  domainPack: DomainPack,
+): string {
   const words = line
     .split(/\s+/)
     .map((w) => w.trim())
     .filter(Boolean);
 
-  if (words.length >= 2 && words.length <= 4) return words.join(' ');
-  if (words.length > 4) return words.slice(0, 4).join(' ');
+  const current = words.join(' ');
+  if (
+    words.length >= 2
+    && words.length <= 4
+    && (hasGroundingSignal(current, groundingHints) || !/right now|game changer|next level|all in one|revolutionary/i.test(current))
+  ) {
+    return current;
+  }
 
-  const fillers = ['right', 'now'];
-  const expanded = [...words, ...fillers].slice(0, 2);
-  return expanded.join(' ');
+  const source = pickGroundedPhrase(groundingHints, index) ?? domainPack.concreteFields[index] ?? domainPack.label;
+  const cleanSource = source
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 4)
+    .join(' ');
+  if (cleanSource.split(/\s+/).filter(Boolean).length >= 2) return cleanSource;
+  if (cleanSource) return `${cleanSource} signal`;
+
+  return index === 2 ? 'move with clarity' : 'clear product signal';
 }
 
 function normalizeNarrationWordCount(segments: string[], concreteFields: string[]): string[] {

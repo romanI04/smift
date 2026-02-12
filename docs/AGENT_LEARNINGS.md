@@ -5,6 +5,7 @@
 - Strict mode (`--strict`) fails if warnings remain above threshold, not just blockers.
 - `autoFixScriptQuality()` can move scripts from non-pass to pass without another model call.
 - Scene pacing should be informational (`notes`) rather than hard warning; otherwise strict mode can false-fail good scripts.
+- Hook quality is now explicitly scored; generic hype phrasing is penalized even if word-count constraints pass.
 
 ## Pipeline Reliability
 
@@ -54,6 +55,7 @@
 - Use `canonicalizeIntegrations()` everywhere integrations are mutated. Mixing raw + canonical tool names increases false warnings.
 - Render relevance guard runs post-generation. If you need raw model behavior for debugging, run with `--no-relevance-guard`.
 - Guard may be intentionally skipped if it regresses quality gates; check `quality.relevanceGuard` in output JSON for rollback details.
+- Keep fallback hooks grounding-aware. When model calls fail, generic hooks become a major relevance regression vector.
 
 ## Real Benchmarking
 

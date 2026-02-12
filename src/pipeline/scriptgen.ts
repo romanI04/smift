@@ -109,7 +109,7 @@ export async function generateScript(
       validateParsedScript(candidate);
 
       candidate.narrationSegments = enforceNarrationWordRange(candidate.narrationSegments, options.domainPack);
-      const groundingFix = enforceGrounding(candidate, groundingHints, featureEvidencePlan);
+      const groundingFix = enforceGrounding(candidate, groundingHints, featureEvidencePlan, options.domainPack);
       candidate = groundingFix;
       candidate.narrationSegments = enforceNarrationWordRange(candidate.narrationSegments, options.domainPack);
       const words = countWords(candidate.narrationSegments.join(' '));
@@ -324,6 +324,7 @@ function enforceGrounding(
   candidate: any,
   groundingHints: GroundingHints,
   featureEvidencePlan: FeatureEvidencePlanItem[],
+  domainPack?: DomainPack,
 ): any {
   const next = {
     ...candidate,
@@ -394,6 +395,8 @@ function enforceGrounding(
     }
   }
 
+  enforceHookQuality(next, groundingHints, featureEvidencePlan, domainPack);
+
   return next;
 }
 
@@ -415,4 +418,66 @@ function tokenOverlap(a: string, b: string): number {
     if (bTokens.has(token)) common += 1;
   }
   return common / Math.max(aTokens.size, bTokens.size);
+}
+
+function enforceHookQuality(
+  candidate: any,
+  groundingHints: GroundingHints,
+  featureEvidencePlan: FeatureEvidencePlanItem[],
+  domainPack?: DomainPack,
+) {
+  const sourceA = featureEvidencePlan[0]?.featureName ?? pickGroundedPhrase(groundingHints, 0) ?? 'Product Execution';
+  const sourceB = featureEvidencePlan[1]?.featureName ?? pickGroundedPhrase(groundingHints, 1) ?? sourceA;
+  const sourceC = featureEvidencePlan[2]?.featureName ?? pickGroundedPhrase(groundingHints, 2) ?? sourceB;
+
+  const fallbackKeywordByPack: Record<string, string> = {
+    general: 'move with clarity',
+    'b2b-saas': 'operate with clarity',
+    devtools: 'ship with confidence',
+    'ecommerce-retail': 'convert more buyers',
+    fintech: 'control risk faster',
+    gaming: 'climb patch faster',
+    'media-creator': 'grow audience faster',
+    education: 'improve learning outcomes',
+    'real-estate': 'close deals faster',
+    'travel-hospitality': 'delight guests consistently',
+    'logistics-ops': 'deliver on time',
+    'social-community': 'grow healthy communities',
+  };
+
+  if (!isStrongHookLine(candidate.hookLine1) || !hasGroundingSignal(candidate.hookLine1, groundingHints)) {
+    candidate.hookLine1 = toHookWords(sourceA, 3);
+  }
+  if (!isStrongHookLine(candidate.hookLine2) || !hasGroundingSignal(candidate.hookLine2, groundingHints)) {
+    candidate.hookLine2 = toHookWords(sourceB, 3);
+  }
+
+  const keywordFallback = fallbackKeywordByPack[domainPack?.id ?? 'general'] ?? 'move with clarity';
+  if (!isStrongHookLine(candidate.hookKeyword)) {
+    candidate.hookKeyword = keywordFallback;
+  }
+  if (!hasGroundingSignal(candidate.hookKeyword, groundingHints)) {
+    const blended = toHookWords(`${sourceC} ${keywordFallback}`, 4);
+    candidate.hookKeyword = blended || keywordFallback;
+  }
+}
+
+function isStrongHookLine(value: string): boolean {
+  const words = value.split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 4) return false;
+  const lower = value.toLowerCase();
+  if (/right now|game changer|next level|all in one|revolutionary/.test(lower)) return false;
+  return true;
+}
+
+function toHookWords(value: string, maxWords: number): string {
+  const tokens = value
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, maxWords);
+  if (tokens.length === 0) return '';
+  if (tokens.length === 1) return `${tokens[0]} signal`;
+  return tokens.join(' ');
 }

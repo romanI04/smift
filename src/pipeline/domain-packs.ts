@@ -49,6 +49,8 @@ export interface DomainPackSelection {
   pack: DomainPack;
   reason: string;
   scores: Record<DomainPackId, number>;
+  confidence: number;
+  topCandidates: Array<{id: DomainPackId; score: number}>;
 }
 
 const DOMAIN_PACKS: Record<DomainPackId, DomainPack> = {
@@ -230,25 +232,23 @@ export function selectDomainPack(scraped: ScrapedData, requested?: 'auto' | Doma
       pack: DOMAIN_PACKS[requested],
       reason: `Selected by --pack=${requested}`,
       scores: makeZeroScores(),
+      confidence: 1,
+      topCandidates: [{id: requested, score: 999}],
     };
   }
 
-  const text = [
-    scraped.domain,
-    scraped.title,
-    scraped.description,
-    scraped.ogTitle,
-    scraped.ogDescription,
-    ...scraped.headings,
-    ...scraped.features,
-    scraped.bodyText,
-  ]
-    .join(' ')
-    .toLowerCase();
+  const corpora = {
+    domain: scraped.domain.toLowerCase(),
+    title: [scraped.title, scraped.ogTitle].join(' ').toLowerCase(),
+    description: [scraped.description, scraped.ogDescription].join(' ').toLowerCase(),
+    headings: scraped.headings.join(' ').toLowerCase(),
+    features: scraped.features.join(' ').toLowerCase(),
+    body: scraped.bodyText.toLowerCase(),
+    links: scraped.links.join(' ').toLowerCase(),
+  };
 
   const scores = makeZeroScores();
-  let bestId: DomainPackId = 'general';
-  let bestScore = 0;
+  const candidates: Array<{id: DomainPackId; score: number}> = [];
 
   for (const id of DOMAIN_PACK_IDS) {
     if (id === 'general') continue;
@@ -256,32 +256,49 @@ export function selectDomainPack(scraped: ScrapedData, requested?: 'auto' | Doma
     let score = 0;
 
     for (const keyword of pack.keywords) {
-      if (text.includes(keyword)) score += 1;
-    }
-    for (const neg of pack.negativeKeywords ?? []) {
-      if (text.includes(neg)) score -= 1;
+      const hitScore = weightedKeywordScore(corpora, keyword);
+      if (hitScore > 0) score += hitScore;
     }
 
-    scores[id] = score;
-    if (score > bestScore) {
-      bestScore = score;
-      bestId = id;
+    for (const neg of pack.negativeKeywords ?? []) {
+      if (weightedKeywordScore(corpora, neg) > 0) {
+        score -= 2.5;
+      }
     }
+
+    score = Number(score.toFixed(2));
+    scores[id] = score;
+    candidates.push({id, score});
   }
 
-  if (bestScore < 2) {
-    scores.general = 1;
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  const runnerUp = candidates[1];
+  const bestScore = best?.score ?? 0;
+  const gap = best && runnerUp ? best.score - runnerUp.score : bestScore;
+  const confidence = inferConfidence(bestScore, gap);
+
+  const MIN_BEST_SCORE = 5;
+  const MIN_GAP = 1.5;
+  const MIN_CONFIDENCE = 0.4;
+  const AMBIGUOUS_HIGH_CONFIDENCE = 0.62;
+
+  if (!best || bestScore < MIN_BEST_SCORE || confidence < MIN_CONFIDENCE || (gap < MIN_GAP && confidence < AMBIGUOUS_HIGH_CONFIDENCE)) {
     return {
       pack: DOMAIN_PACKS.general,
-      reason: 'Auto-selected general fallback (low domain confidence).',
+      reason: `Auto-selected general fallback (best=${best?.id ?? 'none'} score=${bestScore.toFixed(2)}, gap=${gap.toFixed(2)}, confidence=${confidence.toFixed(2)}).`,
       scores,
+      confidence,
+      topCandidates: candidates.slice(0, 3),
     };
   }
 
   return {
-    pack: DOMAIN_PACKS[bestId],
-    reason: `Auto-selected ${bestId} (score ${bestScore}).`,
+    pack: DOMAIN_PACKS[best.id],
+    reason: `Auto-selected ${best.id} (score=${bestScore.toFixed(2)}, gap=${gap.toFixed(2)}, confidence=${confidence.toFixed(2)}).`,
     scores,
+    confidence,
+    topCandidates: candidates.slice(0, 3),
   };
 }
 
@@ -300,4 +317,61 @@ function makeZeroScores(): Record<DomainPackId, number> {
     'logistics-ops': 0,
     'social-community': 0,
   };
+}
+
+function weightedKeywordScore(
+  corpora: {
+    domain: string;
+    title: string;
+    description: string;
+    headings: string;
+    features: string;
+    body: string;
+    links: string;
+  },
+  keyword: string,
+): number {
+  const phrase = toPhraseRegex(keyword);
+  const multiplier = keywordWeight(keyword);
+  let score = 0;
+  if (phrase.test(corpora.domain)) score += 4 * multiplier;
+  if (phrase.test(corpora.title)) score += 3 * multiplier;
+  if (phrase.test(corpora.description)) score += 2 * multiplier;
+  if (phrase.test(corpora.headings)) score += 2 * multiplier;
+  if (phrase.test(corpora.features)) score += 2 * multiplier;
+  if (phrase.test(corpora.links)) score += 1.5 * multiplier;
+  if (phrase.test(corpora.body)) score += 1 * multiplier;
+  return score;
+}
+
+function inferConfidence(bestScore: number, gap: number): number {
+  if (bestScore <= 0) return 0;
+  const strength = Math.min(1, bestScore / 18);
+  const separation = Math.max(0, Math.min(1, gap / Math.max(bestScore, 1)));
+  const confidence = 0.55 * strength + 0.45 * separation;
+  return Number(Math.max(0, Math.min(1, confidence)).toFixed(2));
+}
+
+function toPhraseRegex(term: string): RegExp {
+  const normalized = term.toLowerCase().trim();
+  const phrase = normalized.split(/\s+/).map((part) => escapeRegex(part)).join('\\s+');
+  return new RegExp(`(^|\\W)${phrase}(?=\\W|$)`, 'i');
+}
+
+function keywordWeight(keyword: string): number {
+  const normalized = keyword.toLowerCase().trim();
+  const weakWeights: Record<string, number> = {
+    product: 0.4,
+    platform: 0.4,
+    service: 0.4,
+    solution: 0.4,
+    experience: 0.4,
+    team: 0.45,
+    teams: 0.45,
+  };
+  return weakWeights[normalized] ?? 1;
+}
+
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

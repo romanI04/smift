@@ -32,6 +32,8 @@
 - Keep pack metadata cohesive: when adding a new pack, always define keywords, allowed icons, forbidden terms, concrete fields, fallback integrations, and style hint together.
 - Template routing should stay pack-aware (`defaultTemplateForPack`), otherwise auto-template can drift into irrelevant visual language.
 - Check `out/<name>-quality.json` for `domainPack` and `domainPackReason` during debugging; it is the quickest signal for misclassification.
+- Use `domainPackConfidence` and `domainPackTopCandidates` in `out/<name>-quality.json` before changing prompts; many misses are classification uncertainty, not generation defects.
+- `npm run eval:packs` is the first-line regression check for pack routing changes (offline, deterministic, fast).
 
 ## Known Gaps / Next Work
 
@@ -40,5 +42,5 @@
 - Add persistent queue backend (SQLite/Redis) for crash recovery.
 - Add auth/quotas before exposing self-serve runner beyond localhost.
 - Add a renderless "quality-only" output mode in server responses for fast triage.
-- Improve pack scoring beyond keyword counts (e.g. weighted title/body fields + confidence threshold).
-- Add offline regression fixture set per pack to detect cross-domain leakage before shipping.
+- Add domain-aware terms to scraper extraction (e.g. schema.org / JSON-LD hints) to improve pack confidence on sparse landing pages.
+- Add CI gating for `npm run eval:packs` and fail PRs on pack-routing regressions.

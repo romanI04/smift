@@ -138,8 +138,17 @@ async function run() {
     track('pack', 'Domain pack selected', {
       id: domainPackSelection.pack.id,
       reason: domainPackSelection.reason,
+      confidence: domainPackSelection.confidence,
+      topCandidates: domainPackSelection.topCandidates,
     });
     console.log(`  -> Domain pack: ${domainPackSelection.pack.id} (${domainPackSelection.reason})`);
+    console.log(`  -> Pack confidence: ${domainPackSelection.confidence.toFixed(2)}`);
+    if (domainPackSelection.topCandidates.length > 0) {
+      const top = domainPackSelection.topCandidates
+        .map((candidate) => `${candidate.id}:${candidate.score.toFixed(2)}`)
+        .join(', ');
+      console.log(`  -> Top pack candidates: ${top}`);
+    }
 
     const templateSelection = selectTemplate(scraped, templateArg, domainPackSelection.pack.id);
     track('template', 'Template selected', {id: templateSelection.profile.id, reason: templateSelection.reason});
@@ -190,12 +199,15 @@ async function run() {
         {
           generatedAt: new Date().toISOString(),
           url,
-        template: templateSelection.profile.id,
-        templateReason: templateSelection.reason,
-        domainPack: domainPackSelection.pack.id,
-        domainPackReason: domainPackSelection.reason,
-        generationMode,
-        qualityReport,
+          template: templateSelection.profile.id,
+          templateReason: templateSelection.reason,
+          domainPack: domainPackSelection.pack.id,
+          domainPackReason: domainPackSelection.reason,
+          domainPackConfidence: domainPackSelection.confidence,
+          domainPackTopCandidates: domainPackSelection.topCandidates,
+          domainPackScores: domainPackSelection.scores,
+          generationMode,
+          qualityReport,
         },
         null,
         2,

@@ -8,6 +8,7 @@
     "preview": "remotion preview src/index.ts",
     "generate": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/run.ts",
     "eval": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/eval.ts",
+    "eval:packs": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/pipeline/eval-packs.ts",
     "serve": "ts-node --compiler-options '{\"module\":\"commonjs\",\"jsx\":\"react-jsx\"}' src/server/serve.ts"
   },
   "dependencies": {

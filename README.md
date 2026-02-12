@@ -19,6 +19,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `npm run generate -- <url> --skip-render`: script + quality only
 - `npm run generate -- <url> --strict`: strict quality mode
 - `npm run eval -- --limit=10`: benchmark batch summary (JSON + CSV)
+- `npm run eval:packs`: offline domain-pack regression suite
 - `npm run serve`: local self-serve queue + web UI (`http://localhost:3030`)
 
 ## Useful Flags (`generate`)
@@ -51,8 +52,10 @@ Generated artifacts land in `out/`:
 
 - Domain packs are selected automatically from scraped copy (`--pack=auto`) or forced via `--pack=<id>`.
 - Pack selection drives template default, icon constraints, forbidden terms, concrete on-screen fields, and fallback integrations.
+- Auto-selection now uses weighted field scoring (domain/title/headings/features/body/links) plus confidence+gap gating.
 - Pack metadata is defined in `src/pipeline/domain-packs.ts`.
 - Quality report includes `domainPack` and `domainPackReason` for traceability.
+- Quality report also includes `domainPackConfidence`, `domainPackTopCandidates`, and `domainPackScores`.
 
 ## Docs
 

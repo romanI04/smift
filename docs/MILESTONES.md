@@ -48,3 +48,17 @@
 - Updated quality scoring to validate pack alignment (icons, forbidden terms, integrations, concrete fields).
 - Reworked `FeatureDemo` analytics mockup to consume dynamic demo lines instead of fixed SaaS metrics.
 - Improved scraper reliability with URL candidate retries (`http/https`, `www/non-www`).
+
+### M6 - Pack Confidence Model + Regression Harness
+
+- Upgraded domain-pack auto-selection from flat keyword counts to weighted field scoring:
+  - domain/title/description/headings/features/body/links each contribute different weights.
+  - weak generic keywords are down-weighted to reduce false positives.
+- Added confidence and gap gating for fallback:
+  - ambiguous or weak matches now route to `general` instead of forcing wrong domain packs.
+- Added pack diagnostics to artifacts:
+  - `domainPackConfidence`
+  - `domainPackTopCandidates`
+  - `domainPackScores`
+- Added offline regression fixtures (`src/pipeline/pack-fixtures.ts`) covering every major pack family plus ambiguity/fallback cases.
+- Added pack regression runner (`src/pipeline/eval-packs.ts`) and `npm run eval:packs`.

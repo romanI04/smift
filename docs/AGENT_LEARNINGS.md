@@ -11,6 +11,8 @@
 - Use `--skip-render` for fast eval loops; rendering dominates runtime.
 - Always rely on `out/<name>-job.json` to diagnose stage failures instead of stdout alone.
 - TTS providers are volatile; keep `voice=none` for benchmark correctness and speed.
+- Scraper now supports `scrapeMode=metadata-fallback` for blocked pages; check this first when outputs look generic.
+- If a domain is blocked/challenged, sanitize metadata and avoid feeding challenge-copy into grounding.
 
 ## Eval Harness
 

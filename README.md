@@ -72,6 +72,7 @@ Generated artifacts land in `out/`:
 - Pack metadata is defined in `src/pipeline/domain-packs.ts`.
 - Quality report includes `domainPack` and `domainPackReason` for traceability.
 - Quality report also includes `domainPackConfidence`, `domainPackTopCandidates`, and `domainPackScores`.
+- Scraper can switch to `metadata-fallback` mode on blocked/challenge pages to avoid using anti-bot text as grounding input.
 
 ## Grounding
 

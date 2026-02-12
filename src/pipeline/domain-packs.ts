@@ -364,12 +364,13 @@ export function selectDomainPack(scraped: ScrapedData, requested?: 'auto' | Doma
   const bestScore = best?.score ?? 0;
   const gap = best && runnerUp ? Math.abs(best.score - runnerUp.score) : bestScore;
   const confidence = inferConfidence(bestScore, gap);
+  const isMetadataFallback = scraped.scrapeMode === 'metadata-fallback';
 
-  const MIN_BEST_SCORE = 5;
-  const MIN_GAP = 1.5;
+  const MIN_BEST_SCORE = isMetadataFallback ? 7 : 5;
+  const MIN_GAP = isMetadataFallback ? 2 : 1.5;
   const MIN_CONFIDENCE = 0.4;
   const AMBIGUOUS_HIGH_CONFIDENCE = 0.62;
-  const LOW_SIGNAL_MIN_SCORE = 3;
+  const LOW_SIGNAL_MIN_SCORE = isMetadataFallback ? 5 : 3;
   const LOW_SIGNAL_MIN_GAP = 2;
   const LOW_SIGNAL_MIN_CONFIDENCE = 0.52;
 

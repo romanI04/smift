@@ -135,10 +135,15 @@ async function run() {
       headings: scraped.headings.length,
       features: scraped.features.length,
       structuredHints: scraped.structuredHints.length,
+      scrapeMode: scraped.scrapeMode ?? 'full',
+      scrapeWarnings: scraped.scrapeWarnings ?? [],
     });
     console.log(`  -> ${scraped.title}`);
     console.log(`  -> ${scraped.headings.length} headings, ${scraped.features.length} features found`);
     console.log(`  -> ${scraped.structuredHints.length} structured hints found`);
+    if (scraped.scrapeMode && scraped.scrapeMode !== 'full') {
+      console.log(`  -> Scrape mode: ${scraped.scrapeMode} (${(scraped.scrapeWarnings ?? []).join(', ') || 'no warning'})`);
+    }
     const groundingHints = extractGroundingHints(scraped);
     track('grounding', 'Grounding hints extracted', {
       terms: groundingHints.terms.length,

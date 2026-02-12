@@ -206,3 +206,20 @@
   - phase-by-phase execution path (engine -> workflow -> paid beta -> scale)
   - concrete next 10-workday implementation sequence.
 - Added roadmap link in `README.md` docs section.
+
+### M17 - Blocked-Page Detection + Metadata Fallback (Roadmap Day 1)
+
+- Added blocked/anti-bot page detection in scraper (`src/pipeline/scraper.ts`) using marker signals:
+  - unsupported client/browser, captcha/cloudflare, access denied, etc.
+- Added metadata-fallback extraction mode when blocked signals are detected:
+  - sanitizes blocked metadata
+  - extracts headings/features/body from safe metadata + structured hints
+  - injects neutral domain-based fallback features when source content is sparse.
+- Added scrape diagnostics to pipeline output:
+  - `scrapeMode` and `scrapeWarnings` in `ScrapedData`
+  - run logs now print metadata-fallback mode and reasons.
+- Tightened auto-pack behavior for metadata-fallback pages:
+  - higher confidence/score thresholds to avoid false specific-pack routing.
+- Validation:
+  - `canva.com` now routes through metadata-fallback with clean feature names (no browser-error phrasing).
+  - `npm run eval:real:smoke`: `100%` pack accuracy (`10/10`) and `100%` pass rate (`10/10`).

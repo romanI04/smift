@@ -35,10 +35,7 @@ export async function generateVoice(
 }
 
 function detectEngine(): Engine {
-  // Chatterbox is best quality + free, but HuggingFace Spaces can go down.
-  // ElevenLabs as reliable fallback if key available.
-  if (process.env.eleven_labs_api_key) return 'elevenlabs';
-  if (process.env.openai_api_key) return 'openai';
+  // Chatterbox only — best quality, free
   return 'chatterbox';
 }
 
@@ -116,50 +113,63 @@ async function generateWithOpenAI(
 // --- Chatterbox (Resemble AI via HuggingFace Spaces — FREE) ---
 
 // --- Chatterbox (Resemble AI via HuggingFace Spaces — FREE) ---
-// API: generate_tts_audio
-// Inputs: [text, reference_audio, exaggeration, temperature, seed, cfg_pace, vad_trimming]
-// Output: audio FileData with url
+// Tries multiple spaces for reliability (Zero GPU tier can go down)
 
-const CHATTERBOX_SPACE = 'https://resembleai-chatterbox.hf.space';
-const CHATTERBOX_API = `${CHATTERBOX_SPACE}/gradio_api/call/generate_tts_audio`;
+const CHATTERBOX_SPACES = [
+  {url: 'https://resembleai-chatterbox.hf.space', api: 'generate_tts_audio', params: 7},
+  {url: 'https://freddyaboulton-chatterbox.hf.space', api: 'generate_tts_audio', params: 6},
+  {url: 'https://evalstate-chatterbox.hf.space', api: 'generate_tts_audio', params: 6},
+];
+
+async function callChatterboxSpace(text: string): Promise<{spaceUrl: string; eventId: string; apiPath: string}> {
+  for (const space of CHATTERBOX_SPACES) {
+    const apiUrl = `${space.url}/gradio_api/call/${space.api}`;
+    const data = space.params === 7
+      ? [text, null, 0.5, 0.8, 0, 0.5, false]
+      : [text, null, 0.5, 0.8, 0, 0.5];
+
+    try {
+      const res = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({data}),
+      });
+      if (!res.ok) continue;
+      const {event_id} = await res.json();
+      if (!event_id) continue;
+
+      // Quick check: poll once to see if space is alive
+      await new Promise(r => setTimeout(r, 3000));
+      const checkRes = await fetch(`${apiUrl}/${event_id}`);
+      const checkBody = await checkRes.text();
+      if (checkBody.includes('event: error')) {
+        console.log(`    -> Space ${space.url} returned error, trying next...`);
+        continue;
+      }
+      // Space is alive — return for full polling
+      return {spaceUrl: space.url, eventId: event_id, apiPath: apiUrl};
+    } catch {
+      console.log(`    -> Space ${space.url} unreachable, trying next...`);
+      continue;
+    }
+  }
+  throw new Error('All Chatterbox HuggingFace Spaces are currently unavailable. Try again later.');
+}
 
 async function generateWithChatterbox(
   text: string,
   options: VoiceOptions,
 ): Promise<{path: string; durationMs: number}> {
-  const chunks = chunkText(text, 290); // Space limit is 300 chars
+  const chunks = chunkText(text, 290);
   const audioBuffers: Buffer[] = [];
 
   for (let i = 0; i < chunks.length; i++) {
     if (chunks.length > 1) console.log(`    -> Chunk ${i + 1}/${chunks.length}: "${chunks[i].slice(0, 50)}..."`);
 
-    // POST to get event_id
-    const callResponse = await fetch(CHATTERBOX_API, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        data: [
-          chunks[i],   // text
-          null,         // reference audio (null = default voice)
-          0.5,          // exaggeration (0.25-2, 0.5 = neutral)
-          0.8,          // temperature
-          0,            // seed (0 = random)
-          0.5,          // cfg/pace
-          false,        // ref VAD trimming
-        ],
-      }),
-    });
+    const {spaceUrl, eventId, apiPath} = await callChatterboxSpace(chunks[i]);
+    if (i === 0) console.log(`    -> Using space: ${spaceUrl}`);
 
-    if (!callResponse.ok) {
-      const error = await callResponse.text();
-      throw new Error(`Chatterbox API error ${callResponse.status}: ${error}`);
-    }
-
-    const {event_id} = await callResponse.json();
-    if (!event_id) throw new Error('No event_id returned from Chatterbox');
-
-    // Poll SSE for result
-    const audioUrl = await pollChatterboxResult(event_id);
+    const audioUrl = await pollChatterboxResult(eventId, apiPath);
 
     const audioResponse = await fetch(audioUrl);
     if (!audioResponse.ok) {
@@ -188,8 +198,8 @@ async function generateWithChatterbox(
   return saveAndMeasure(fs.readFileSync(options.outputPath), text, options.outputPath);
 }
 
-async function pollChatterboxResult(eventId: string): Promise<string> {
-  const sseUrl = `${CHATTERBOX_API}/${eventId}`;
+async function pollChatterboxResult(eventId: string, apiPath: string): Promise<string> {
+  const sseUrl = `${apiPath}/${eventId}`;
 
   for (let attempt = 0; attempt < 90; attempt++) {
     await new Promise(r => setTimeout(r, 2000));
@@ -208,7 +218,11 @@ async function pollChatterboxResult(eventId: string): Promise<string> {
               const audioInfo = data[0];
               if (typeof audioInfo === 'string') return audioInfo;
               if (audioInfo.url) return audioInfo.url;
-              if (audioInfo.path) return `${CHATTERBOX_SPACE}/gradio_api/file=${audioInfo.path}`;
+              if (audioInfo.path) {
+                // Extract base URL from apiPath (e.g. https://x.hf.space/gradio_api/call/fn -> https://x.hf.space)
+                const baseUrl = apiPath.split('/gradio_api/')[0];
+                return `${baseUrl}/gradio_api/file=${audioInfo.path}`;
+              }
             }
           }
         }

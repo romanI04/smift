@@ -1,41 +1,58 @@
-import {AbsoluteFill, Audio, Sequence, staticFile, useVideoConfig} from 'remotion';
+import {AbsoluteFill, Audio, Sequence, staticFile, useCurrentFrame, useVideoConfig, interpolate} from 'remotion';
+import {TransitionSeries, linearTiming, springTiming} from '@remotion/transitions';
+import {slide} from '@remotion/transitions/slide';
+import {wipe} from '@remotion/transitions/wipe';
+import {fade} from '@remotion/transitions/fade';
 import {BrandReveal} from './scenes/BrandReveal';
 import {HookText} from './scenes/HookText';
 import {Wordmark} from './scenes/Wordmark';
 import {FeatureDemo} from './scenes/FeatureDemo';
 import {Integrations} from './scenes/Integrations';
 import {Closing} from './scenes/Closing';
-import {FadeIn} from './scenes/Transition';
 import {CinematicOverlay} from './scenes/CinematicOverlay';
+import {DotMotif} from './scenes/DotMotif';
 import type {VideoProps} from './types';
 
-// Timeline proportions (relative to total duration)
-// These define WHERE each scene starts/ends as a fraction of total video length
-const TIMELINE = {
-  brandReveal:   {start: 0,     end: 0.069},   // ~3s
-  hookText:      {start: 0.062, end: 0.156},   // ~4.2s
-  wordmark:      {start: 0.149, end: 0.210},   // ~2.8s
-  feature1:      {start: 0.207, end: 0.352},   // ~6.7s
-  feature2:      {start: 0.348, end: 0.493},   // ~6.7s
-  feature3:      {start: 0.489, end: 0.620},   // ~5.8s
-  integrations:  {start: 0.612, end: 0.786},   // ~7.8s
-  closing:       {start: 0.776, end: 1.0},     // ~10.3s
+// Scene durations as fractions of total video length
+const SCENE_FRACS = {
+  brandReveal:  0.10,
+  hookText:     0.14,
+  wordmark:     0.08,
+  feature1:     0.15,
+  feature2:     0.15,
+  feature3:     0.13,
+  integrations: 0.15,
+  closing:      0.18,
 };
 
-// Voice starts after BrandReveal
-const VOICE_START_FRAC = 0.062;
+// Overlap duration for transitions (fraction of total)
+const OVERLAP_FRAC = 0.025;
+
+// Voice starts shortly after brand reveal
+const VOICE_START_FRAC = 0.06;
 
 export const SaasIntro: React.FC<VideoProps> = (props) => {
-  const {durationInFrames} = useVideoConfig();
+  const {durationInFrames, fps} = useVideoConfig();
 
-  // Helper: convert fraction to frame number
+  // Convert fraction to frames
   const f = (frac: number) => Math.round(frac * durationInFrames);
-  // Helper: duration between two fractions
-  const dur = (start: number, end: number) => f(end) - f(start);
+  const overlap = f(OVERLAP_FRAC);
+
+  // Scene durations in frames
+  const scenes = {
+    brandReveal:  f(SCENE_FRACS.brandReveal),
+    hookText:     f(SCENE_FRACS.hookText),
+    wordmark:     f(SCENE_FRACS.wordmark),
+    feature1:     f(SCENE_FRACS.feature1),
+    feature2:     f(SCENE_FRACS.feature2),
+    feature3:     f(SCENE_FRACS.feature3),
+    integrations: f(SCENE_FRACS.integrations),
+    closing:      f(SCENE_FRACS.closing),
+  };
 
   return (
     <CinematicOverlay>
-      <AbsoluteFill style={{backgroundColor: 'white'}}>
+      <AbsoluteFill style={{backgroundColor: '#FAFAFA'}}>
         {/* Voice narration */}
         {props.audioSrc && (
           <Sequence from={f(VOICE_START_FRAC)} name="Narration">
@@ -43,16 +60,24 @@ export const SaasIntro: React.FC<VideoProps> = (props) => {
           </Sequence>
         )}
 
-        <Sequence from={f(TIMELINE.brandReveal.start)} durationInFrames={dur(TIMELINE.brandReveal.start, TIMELINE.brandReveal.end)} name="Brand Reveal">
-          <BrandReveal
-            brandName={props.brandName}
-            brandColor={props.brandColor}
-            accentColor={props.accentColor}
-          />
-        </Sequence>
+        {/* Scene sequence with transitions */}
+        <TransitionSeries>
+          {/* 1. Brand Reveal — orb morphs to dot */}
+          <TransitionSeries.Sequence durationInFrames={scenes.brandReveal}>
+            <BrandReveal
+              brandName={props.brandName}
+              brandColor={props.brandColor}
+              accentColor={props.accentColor}
+            />
+          </TransitionSeries.Sequence>
 
-        <Sequence from={f(TIMELINE.hookText.start)} durationInFrames={dur(TIMELINE.hookText.start, TIMELINE.hookText.end)} name="Hook Text">
-          <FadeIn durationFrames={10}>
+          <TransitionSeries.Transition
+            presentation={fade()}
+            timing={linearTiming({durationInFrames: overlap})}
+          />
+
+          {/* 2. Hook Text — kinetic typography */}
+          <TransitionSeries.Sequence durationInFrames={scenes.hookText}>
             <HookText
               line1={props.hookLine1}
               line2={props.hookLine2}
@@ -60,68 +85,100 @@ export const SaasIntro: React.FC<VideoProps> = (props) => {
               accentColor={props.accentColor}
               brandColor={props.brandColor}
             />
-          </FadeIn>
-        </Sequence>
+          </TransitionSeries.Sequence>
 
-        <Sequence from={f(TIMELINE.wordmark.start)} durationInFrames={dur(TIMELINE.wordmark.start, TIMELINE.wordmark.end)} name="Wordmark">
-          <FadeIn durationFrames={8}>
+          <TransitionSeries.Transition
+            presentation={slide({direction: 'from-bottom'})}
+            timing={springTiming({config: {damping: 14, stiffness: 80}, durationInFrames: overlap + 4})}
+          />
+
+          {/* 3. Wordmark flash */}
+          <TransitionSeries.Sequence durationInFrames={scenes.wordmark}>
             <Wordmark
               brandName={props.brandName}
               brandColor={props.brandColor}
               tagline={props.tagline}
             />
-          </FadeIn>
-        </Sequence>
+          </TransitionSeries.Sequence>
 
-        <Sequence from={f(TIMELINE.feature1.start)} durationInFrames={dur(TIMELINE.feature1.start, TIMELINE.feature1.end)} name={`Feature 1: ${props.features[0]?.appName || ''}`}>
-          <FadeIn durationFrames={8}>
+          <TransitionSeries.Transition
+            presentation={wipe({direction: 'from-left'})}
+            timing={linearTiming({durationInFrames: overlap + 2})}
+          />
+
+          {/* 4. Feature 1 */}
+          <TransitionSeries.Sequence durationInFrames={scenes.feature1}>
             <FeatureDemo
               feature={props.features[0]}
               brandColor={props.brandColor}
               accentColor={props.accentColor}
             />
-          </FadeIn>
-        </Sequence>
+          </TransitionSeries.Sequence>
 
-        <Sequence from={f(TIMELINE.feature2.start)} durationInFrames={dur(TIMELINE.feature2.start, TIMELINE.feature2.end)} name={`Feature 2: ${props.features[1]?.appName || ''}`}>
-          <FadeIn durationFrames={8}>
+          <TransitionSeries.Transition
+            presentation={slide({direction: 'from-right'})}
+            timing={springTiming({config: {damping: 16, stiffness: 90}, durationInFrames: overlap + 2})}
+          />
+
+          {/* 5. Feature 2 */}
+          <TransitionSeries.Sequence durationInFrames={scenes.feature2}>
             <FeatureDemo
               feature={props.features[1]}
               brandColor={props.brandColor}
               accentColor={props.accentColor}
             />
-          </FadeIn>
-        </Sequence>
+          </TransitionSeries.Sequence>
 
-        <Sequence from={f(TIMELINE.feature3.start)} durationInFrames={dur(TIMELINE.feature3.start, TIMELINE.feature3.end)} name={`Feature 3: ${props.features[2]?.appName || ''}`}>
-          <FadeIn durationFrames={8}>
+          <TransitionSeries.Transition
+            presentation={slide({direction: 'from-left'})}
+            timing={springTiming({config: {damping: 16, stiffness: 90}, durationInFrames: overlap + 2})}
+          />
+
+          {/* 6. Feature 3 */}
+          <TransitionSeries.Sequence durationInFrames={scenes.feature3}>
             <FeatureDemo
               feature={props.features[2]}
               brandColor={props.brandColor}
               accentColor={props.accentColor}
             />
-          </FadeIn>
-        </Sequence>
+          </TransitionSeries.Sequence>
 
-        <Sequence from={f(TIMELINE.integrations.start)} durationInFrames={dur(TIMELINE.integrations.start, TIMELINE.integrations.end)} name="Integrations">
-          <FadeIn durationFrames={10}>
+          <TransitionSeries.Transition
+            presentation={wipe({direction: 'from-right'})}
+            timing={linearTiming({durationInFrames: overlap + 4})}
+          />
+
+          {/* 7. Integrations carousel */}
+          <TransitionSeries.Sequence durationInFrames={scenes.integrations}>
             <Integrations
               integrations={props.integrations}
               brandColor={props.brandColor}
               accentColor={props.accentColor}
               brandName={props.brandName}
             />
-          </FadeIn>
-        </Sequence>
+          </TransitionSeries.Sequence>
 
-        <Sequence from={f(TIMELINE.closing.start)} durationInFrames={dur(TIMELINE.closing.start, TIMELINE.closing.end)} name="Closing">
-          <Closing
-            brandName={props.brandName}
-            brandColor={props.brandColor}
-            accentColor={props.accentColor}
-            ctaUrl={props.ctaUrl}
+          <TransitionSeries.Transition
+            presentation={fade()}
+            timing={linearTiming({durationInFrames: overlap + 6})}
           />
-        </Sequence>
+
+          {/* 8. Closing */}
+          <TransitionSeries.Sequence durationInFrames={scenes.closing}>
+            <Closing
+              brandName={props.brandName}
+              brandColor={props.brandColor}
+              accentColor={props.accentColor}
+              ctaUrl={props.ctaUrl}
+            />
+          </TransitionSeries.Sequence>
+        </TransitionSeries>
+
+        {/* Persistent dot motif — travels across scenes */}
+        <DotMotif
+          brandColor={props.brandColor}
+          accentColor={props.accentColor}
+        />
       </AbsoluteFill>
     </CinematicOverlay>
   );

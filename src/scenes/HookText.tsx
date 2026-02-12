@@ -11,47 +11,28 @@ interface Props {
 
 export const HookText: React.FC<Props> = ({line1, line2, keyword, accentColor, brandColor}) => {
   const frame = useCurrentFrame();
-  const {fps} = useVideoConfig();
-
-  // Black dot motif (persists from BrandReveal)
-  const dotScale = spring({frame, fps, config: {damping: 14, stiffness: 100}});
-  const dotSize = 14;
+  const {fps, durationInFrames} = useVideoConfig();
 
   const lines = [
-    {text: line1, startFrame: 5, color: brandColor},
-    {text: line2, startFrame: 35, color: brandColor},
-    {text: keyword, startFrame: 65, color: accentColor, isKeyword: true},
+    {text: line1, startFrame: 8, color: brandColor},
+    {text: line2, startFrame: 38, color: brandColor},
+    {text: keyword, startFrame: 68, color: accentColor, isKeyword: true},
   ];
 
-  // Exit: everything fades
-  const exitOpacity = interpolate(frame, [100, 125], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
-
   return (
-    <AbsoluteFill style={{backgroundColor: 'white', justifyContent: 'center', alignItems: 'center'}}>
-      <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, opacity: exitOpacity}}>
-        {/* Dot */}
-        <div
-          style={{
-            width: dotSize,
-            height: dotSize,
-            borderRadius: '50%',
-            backgroundColor: brandColor,
-            marginBottom: 20,
-            transform: `scale(${dotScale})`,
-          }}
-        />
-
+    <AbsoluteFill style={{backgroundColor: '#FAFAFA', justifyContent: 'center', alignItems: 'center'}}>
+      <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8}}>
         {lines.map((line, i) => {
           const lineFrame = frame - line.startFrame;
-          if (lineFrame < 0) return <div key={i} style={{height: 80}} />;
+          if (lineFrame < 0) return <div key={i} style={{height: 85}} />;
 
           const slideUp = spring({
             frame: lineFrame,
             fps,
-            config: {damping: 14, stiffness: 80, mass: 0.6},
+            config: {damping: 12, stiffness: 70, mass: 0.7},
           });
 
-          const translateY = interpolate(slideUp, [0, 1], [30, 0]);
+          const translateY = interpolate(slideUp, [0, 1], [40, 0]);
 
           return (
             <div
@@ -60,39 +41,42 @@ export const HookText: React.FC<Props> = ({line1, line2, keyword, accentColor, b
                 transform: `translateY(${translateY}px)`,
                 display: 'flex',
                 justifyContent: 'center',
-                height: 80,
+                height: 85,
                 alignItems: 'center',
               }}
             >
               {line.text.split('').map((char, j) => {
-                const charDelay = j * 1.5;
+                const charDelay = j * 1.2;
                 const charFrame = lineFrame - charDelay;
 
-                // Smooth color transition per character
-                const colorProgress = interpolate(charFrame, [0, 8], [0, 1], {
+                const colorProgress = interpolate(charFrame, [0, 10], [0, 1], {
                   extrapolateLeft: 'clamp',
                   extrapolateRight: 'clamp',
                 });
 
-                const charOpacity = interpolate(charFrame, [-2, 3], [0, 1], {
+                const charOpacity = interpolate(charFrame, [-2, 4], [0, 1], {
                   extrapolateLeft: 'clamp',
                   extrapolateRight: 'clamp',
                 });
+
+                // Slight scale bounce per character
+                const charScale = charFrame > 0
+                  ? interpolate(charFrame, [0, 4, 8], [0.9, 1.02, 1], {extrapolateRight: 'clamp'})
+                  : 0.9;
 
                 const charColor = line.isKeyword
                   ? accentColor
                   : colorProgress < 0.5
-                    ? '#bbb'
+                    ? '#ccc'
                     : brandColor;
 
-                // Spaces need explicit width in flex layout
                 const isSpace = char === ' ';
 
                 return (
                   <span
                     key={j}
                     style={{
-                      fontSize: 80,
+                      fontSize: 78,
                       fontWeight: 700,
                       fontFamily: FONT_DISPLAY,
                       color: charColor,
@@ -100,6 +84,7 @@ export const HookText: React.FC<Props> = ({line1, line2, keyword, accentColor, b
                       letterSpacing: '-0.03em',
                       display: 'inline-block',
                       minWidth: isSpace ? '0.25em' : undefined,
+                      transform: `scale(${charScale})`,
                     }}
                   >
                     {isSpace ? '\u00A0' : char}

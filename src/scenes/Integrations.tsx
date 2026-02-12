@@ -1,5 +1,5 @@
 import {AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig} from 'remotion';
-import {FONT_DISPLAY} from '../fonts';
+import {FONT_DISPLAY, FONT_BODY} from '../fonts';
 
 interface Props {
   integrations: string[];
@@ -69,7 +69,7 @@ const AppIcon: React.FC<{name: string; size: number}> = ({name, size}) => {
         style={{
           fontSize: size * 0.42,
           fontWeight: 700,
-          fontFamily: 'system-ui, -apple-system, sans-serif',
+          fontFamily: FONT_BODY,
           color: style.fg,
           letterSpacing: '-0.02em',
         }}
@@ -106,7 +106,7 @@ export const Integrations: React.FC<Props> = ({integrations, brandColor, accentC
     : 1;
 
   return (
-    <AbsoluteFill style={{backgroundColor: 'white', justifyContent: 'center', alignItems: 'center'}}>
+    <AbsoluteFill style={{backgroundColor: '#FAFAFA', justifyContent: 'center', alignItems: 'center'}}>
       <div style={{opacity: exitOpacity}}>
         {/* Icon ring */}
         <div

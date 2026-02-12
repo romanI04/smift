@@ -35,11 +35,9 @@ export async function generateVoice(
 }
 
 function detectEngine(): Engine {
-  // Default to ElevenLabs if available, otherwise OpenAI
-  // Chatterbox is free but must be explicitly selected via --voice=chatterbox
-  if (process.env.eleven_labs_api_key) return 'elevenlabs';
-  if (process.env.openai_api_key) return 'openai';
-  return 'chatterbox'; // Free fallback — no API key needed
+  // Chatterbox is the best quality and free — default choice
+  // Use --voice=elevenlabs or --voice=openai to override
+  return 'chatterbox';
 }
 
 // --- ElevenLabs v3 ---

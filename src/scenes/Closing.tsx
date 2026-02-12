@@ -48,7 +48,7 @@ export const Closing: React.FC<Props> = ({brandName, brandColor, accentColor, ct
     : 1;
 
   return (
-    <AbsoluteFill style={{backgroundColor: 'white', justifyContent: 'center', alignItems: 'center'}}>
+    <AbsoluteFill style={{backgroundColor: '#FAFAFA', justifyContent: 'center', alignItems: 'center'}}>
       {/* Ring pulses */}
       <div
         style={{

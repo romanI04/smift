@@ -89,3 +89,4 @@ Generated artifacts land in `out/`:
 
 - `docs/MILESTONES.md`: sprint milestone log
 - `docs/AGENT_LEARNINGS.md`: implementation notes and known traps for future agents
+- `docs/ROADMAP.md`: paid-product roadmap, acceptance gates, and execution order

@@ -196,3 +196,13 @@
 - Validation:
   - `intercom.com` now produces stable sparse features (`Support Inbox`, `Customer Timeline`, `Agent Routing`) with quality pass.
   - `npm run eval:real:smoke`: `100%` pack accuracy (`10/10`), `100%` pass rate (`10/10`), `0` errors.
+
+### M16 - Product Roadmap Baseline (Execution Discipline)
+
+- Added explicit product roadmap doc (`docs/ROADMAP.md`) to remove ad-hoc execution.
+- Defined:
+  - V1 target user and core promise
+  - paid-ready acceptance gates (quality, reliability, UX, commercial basics)
+  - phase-by-phase execution path (engine -> workflow -> paid beta -> scale)
+  - concrete next 10-workday implementation sequence.
+- Added roadmap link in `README.md` docs section.

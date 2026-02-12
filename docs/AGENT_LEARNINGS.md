@@ -43,6 +43,8 @@
 - `extractGroundingHints()` should run once per scrape and be passed through generation, fallback, autofix, and quality scoring.
 - If scripts feel generic, inspect `quality.grounding.coverage` first; low coverage usually means weak source extraction or over-aggressive prompt edits.
 - Feature scene visuals are now pack-driven. If a pack looks off, start in `src/scenes/FeatureDemo.tsx` (`DOMAIN_VISUAL_THEMES` + `selectMockup`) before touching pipeline prompts.
+- Feature naming is now canonicalized in `grounding.ts`; avoid adding ad-hoc name cleanup logic inside scriptgen/autofix.
+- Use `canonicalizeIntegrations()` everywhere integrations are mutated. Mixing raw + canonical tool names increases false warnings.
 
 ## Known Gaps / Next Work
 
@@ -53,4 +55,4 @@
 - Add a renderless "quality-only" output mode in server responses for fast triage.
 - Add domain-aware terms to scraper extraction (e.g. schema.org / JSON-LD hints) to improve pack confidence on sparse landing pages.
 - Add CI gating for `npm run eval:packs` and fail PRs on pack-routing regressions.
-- Tighten app-name cleanup for noisy source phrases on marketing-heavy pages (e.g. Shopify headline fragments).
+- Reduce repetitive feature-name roots on sparse single-theme sites (e.g. TFT pages repeating "Teamfight Tactics" variants).

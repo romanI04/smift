@@ -4,8 +4,9 @@ import type {ScriptResult} from './script-types';
 import type {TemplateProfile} from './templates';
 import type {DomainPack, DomainPackId, FeatureIconId} from './domain-packs';
 import {
+  canonicalizeFeatureName,
+  canonicalizeIntegrations,
   extractGroundingHints,
-  pickGroundedIntegration,
   pickGroundedNumber,
   pickGroundedPhrase,
   type GroundingHints,
@@ -134,7 +135,7 @@ function buildFeatures(scraped: ScrapedData, domainPack: DomainPack, groundingHi
     const icon = inferIcon(seed, domainPack.allowedIcons);
     const groundedPhrase = pickGroundedPhrase(groundingHints, index);
     const caption = captionFromSeed(groundedPhrase ?? seed);
-    const appName = appNameFromSeed(groundedPhrase ?? seed, index, domainPack.id);
+    const appName = canonicalizeFeatureName(groundedPhrase ?? seed, groundingHints, index);
     const demoLines = demoLinesFromSeed(seed, index, domainPack, groundingHints);
     return {
       icon,
@@ -203,35 +204,6 @@ function captionFromSeed(seed: string): string {
   return words.join(' ');
 }
 
-function appNameFromSeed(seed: string, index: number, packId: DomainPackId): string {
-  const cleaned = seed
-    .replace(/[^a-zA-Z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 3)
-    .join(' ')
-    .trim();
-
-  if (cleaned.length >= 3) return cleaned;
-
-  const defaults: Record<DomainPackId, string[]> = {
-    general: ['Core Workflow', 'Signal Board', 'Action Queue'],
-    'b2b-saas': ['Ops Board', 'Execution Queue', 'Team Signals'],
-    devtools: ['Build Monitor', 'Deploy Queue', 'Incident Feed'],
-    'ecommerce-retail': ['Merch Dashboard', 'Order Flow', 'Retention Signals'],
-    fintech: ['Risk Console', 'Txn Monitor', 'Settlement Queue'],
-    gaming: ['Tier Board', 'Patch Tracker', 'Comp Builder'],
-    'media-creator': ['Content Pipeline', 'Audience Signals', 'Publish Planner'],
-    education: ['Learner Progress', 'Curriculum Planner', 'Assessment Board'],
-    'real-estate': ['Listing Pipeline', 'Offer Tracker', 'Showing Planner'],
-    'travel-hospitality': ['Reservation Desk', 'Guest Timeline', 'Property Ops'],
-    'logistics-ops': ['Route Planner', 'Shipment Board', 'Capacity Console'],
-    'social-community': ['Community Feed', 'Moderation Queue', 'Engagement Board'],
-  };
-
-  return defaults[packId][index] ?? `Feature ${index + 1}`;
-}
-
 function demoLinesFromSeed(seed: string, index: number, pack: DomainPack, groundingHints: GroundingHints): string[] {
   const groundedPhrase = pickGroundedPhrase(groundingHints, index) ?? seed;
   const firstLine = groundedPhrase.length > 64 ? `${groundedPhrase.slice(0, 61)}...` : groundedPhrase;
@@ -275,26 +247,11 @@ function sampleValue(field: string, seed: number): string {
 }
 
 function buildIntegrations(scraped: ScrapedData, pack: DomainPack, groundingHints: GroundingHints): string[] {
-  const normalized = new Set<string>();
   const fromLinks = scraped.links
     .map((entry) => entry.split(':')[0].trim())
     .filter((label) => label.length >= 2 && label.length <= 24)
     .slice(0, 12);
-
-  const picked: string[] = [];
-  const grounded = groundingHints.integrationCandidates.length > 0
-    ? groundingHints.integrationCandidates
-    : [pickGroundedIntegration(groundingHints, 0)].filter(Boolean) as string[];
-
-  for (const candidate of [...grounded, ...fromLinks, ...pack.fallbackIntegrations]) {
-    const key = candidate.toLowerCase();
-    if (normalized.has(key)) continue;
-    normalized.add(key);
-    picked.push(candidate);
-    if (picked.length >= 6) break;
-  }
-
-  return picked;
+  return canonicalizeIntegrations(fromLinks, groundingHints, pack.fallbackIntegrations, 6);
 }
 
 function buildNarration(args: {

@@ -92,3 +92,19 @@
   - `FeatureDemo` now uses domain-driven layout variants (`terminal`, `commerce`, `ledger`, `leaderboard`, `timeline`, `feed`, `default`).
   - scene background, glow, and pill treatment now vary by selected domain pack.
   - `SaasIntro` now passes `domainPackId` through to all feature scenes.
+
+### M9 - Grounding Strictness V2 + Integration Resolver
+
+- Expanded grounding hints with `featureNameCandidates` and stronger label cleanup heuristics.
+- Added feature-name canonicalization:
+  - candidate scoring + similarity gating against grounded names
+  - noisy names are replaced with synthesized source-term labels.
+- Added integration resolver + alias mapping:
+  - canonicalizes integration names (e.g., GitHub, Stripe, Booking.com) from raw labels/hrefs/model output.
+  - applied consistently across script generation, fallback, and autofix.
+- Tightened quality scoring with grounding-focused checks:
+  - stronger penalties for weak grounding coverage
+  - per-feature grounding checks
+  - numeric-signal expectations when source numbers exist
+  - integration overlap accepts either pack defaults or grounded integration candidates.
+- Pipeline logging now reports grounded feature-name candidate counts.

@@ -4,6 +4,7 @@ import type {ScriptResult} from './script-types';
 export interface GroundingHints {
   terms: string[];
   phrases: string[];
+  featureNameCandidates: string[];
   numbers: string[];
   integrationCandidates: string[];
 }
@@ -27,6 +28,12 @@ const STOP_WORDS = new Set([
   'made', 'teams', 'team', 'users', 'user',
 ]);
 
+const FEATURE_NOISE_WORDS = new Set([
+  'all', 'one', 'next', 'nextbig', 'best', 'future', 'today', 'available', 'line', 'behind', 'they', 'their',
+  'every', 'across', 'more', 'less', 'great', 'better', 'new', 'modern', 'ultimate',
+  'here', 'there', 'forever', 'everyone', 'mers', 'thing', 'things',
+]);
+
 const KNOWN_TOOLS = [
   'Slack', 'Notion', 'HubSpot', 'Zapier', 'GitHub', 'Vercel', 'Sentry', 'Linear',
   'Shopify', 'Stripe', 'Klaviyo', 'Zendesk', 'Plaid', 'QuickBooks', 'Salesforce',
@@ -35,6 +42,25 @@ const KNOWN_TOOLS = [
   'Booking.com', 'Airbnb', 'Expedia', 'ShipStation', 'UPS', 'FedEx', 'SAP',
   'Reddit', 'Telegram', 'Google Drive',
 ];
+
+const INTEGRATION_ALIAS_MAP: Record<string, string> = {
+  'google docs': 'Google Drive',
+  'google sheets': 'Google Drive',
+  'gdrive': 'Google Drive',
+  'gtm': 'Google Drive',
+  'github.com': 'GitHub',
+  'gh': 'GitHub',
+  'yt': 'YouTube',
+  'google classroom': 'Google Classroom',
+  'quick books': 'QuickBooks',
+  'bookings': 'Booking.com',
+  'booking': 'Booking.com',
+  'air bnb': 'Airbnb',
+  'fed ex': 'FedEx',
+  'docu sign': 'DocuSign',
+};
+
+const TOOL_KEY_TO_CANONICAL = buildToolDictionary();
 
 export function extractGroundingHints(scraped: ScrapedData): GroundingHints {
   const text = [
@@ -52,6 +78,7 @@ export function extractGroundingHints(scraped: ScrapedData): GroundingHints {
     .trim();
 
   const phrases = collectPhrases(scraped);
+  const featureNameCandidates = collectFeatureNameCandidates(scraped, phrases);
   const numbers = collectNumbers(text);
   const terms = collectTerms(text, scraped.domain);
   const integrationCandidates = collectIntegrationCandidates(scraped, text);
@@ -59,6 +86,7 @@ export function extractGroundingHints(scraped: ScrapedData): GroundingHints {
   return {
     terms,
     phrases,
+    featureNameCandidates,
     numbers,
     integrationCandidates,
   };
@@ -74,6 +102,7 @@ export function hasGroundingSignal(text: string, hints: GroundingHints): boolean
 }
 
 export function pickGroundedPhrase(hints: GroundingHints, index: number): string | null {
+  if (hints.featureNameCandidates.length > 0) return hints.featureNameCandidates[index % hints.featureNameCandidates.length];
   if (hints.phrases.length > 0) return hints.phrases[index % hints.phrases.length];
   if (hints.terms.length > 0) return toTitleCase(hints.terms[index % hints.terms.length]);
   return null;
@@ -87,6 +116,68 @@ export function pickGroundedNumber(hints: GroundingHints, index: number): string
 export function pickGroundedIntegration(hints: GroundingHints, index: number): string | null {
   if (hints.integrationCandidates.length === 0) return null;
   return hints.integrationCandidates[index % hints.integrationCandidates.length];
+}
+
+export function canonicalizeFeatureName(raw: string, hints: GroundingHints, index: number): string {
+  const candidate = cleanupFeatureLabel(raw);
+  const similarity = bestLabelSimilarity(candidate, hints.featureNameCandidates);
+  const specificity = labelSpecificityScore(candidate, hints);
+  if (
+    isStrongFeatureLabel(candidate)
+    && hasGroundingSignal(candidate, hints)
+    && similarity >= 0.34
+    && specificity >= 2
+  ) {
+    return candidate;
+  }
+
+  const fallback = hints.featureNameCandidates[index % Math.max(1, hints.featureNameCandidates.length)]
+    ?? hints.phrases[index % Math.max(1, hints.phrases.length)]
+    ?? toTitleCase(hints.terms[index % Math.max(1, hints.terms.length)] ?? `Feature ${index + 1}`);
+  const cleanedFallback = cleanupFeatureLabel(fallback);
+  if (isStrongFeatureLabel(cleanedFallback) && labelSpecificityScore(cleanedFallback, hints) >= 2) {
+    return cleanedFallback;
+  }
+
+  return synthesizeFeatureName(hints, index);
+}
+
+export function canonicalizeIntegrations(
+  integrations: string[],
+  hints: GroundingHints,
+  fallbackIntegrations: string[] = [],
+  limit = 12,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: string | null) => {
+    if (!value) return;
+    const canonical = resolveIntegrationName(value) ?? titleTokenize(value);
+    const key = normalizeToolKey(canonical);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(canonical);
+  };
+
+  for (const integration of integrations) add(integration);
+  for (const integration of hints.integrationCandidates) add(integration);
+  for (const integration of fallbackIntegrations) add(integration);
+
+  return out.slice(0, limit);
+}
+
+export function resolveIntegrationName(value: string): string | null {
+  const raw = normalizeWhitespace(value);
+  if (!raw) return null;
+  const alias = INTEGRATION_ALIAS_MAP[raw.toLowerCase()];
+  if (alias) return alias;
+
+  const key = normalizeToolKey(raw);
+  if (!key) return null;
+  if (TOOL_KEY_TO_CANONICAL[key]) return TOOL_KEY_TO_CANONICAL[key];
+
+  const best = KNOWN_TOOLS.find((tool) => hasWholePhrase(raw.toLowerCase(), tool.toLowerCase()));
+  return best ?? null;
 }
 
 export function summarizeGroundingUsage(script: ScriptResult, hints: GroundingHints): GroundingSummary {
@@ -138,6 +229,24 @@ function collectPhrases(scraped: ScrapedData): string[] {
   return dedupeByNormalized(phrases).slice(0, 18);
 }
 
+function collectFeatureNameCandidates(scraped: ScrapedData, phrases: string[]): string[] {
+  const phraseDerived = phrases
+    .map((phrase) => featureLabelFromPhrase(phrase))
+    .filter((line) => isStrongFeatureLabel(line));
+
+  const titleChunks = scraped.title
+    .split(/[|:\-]/)
+    .map((part) => normalizeWhitespace(part))
+    .filter(Boolean);
+  const raw = [...scraped.headings, ...scraped.features, ...titleChunks, ...phrases];
+
+  const rawDerived = raw
+    .map((line) => cleanupFeatureLabel(line))
+    .filter((line) => isStrongFeatureLabel(line));
+
+  return dedupeByNormalized([...phraseDerived, ...rawDerived]).slice(0, 24);
+}
+
 function collectTerms(text: string, domain: string): string[] {
   const freq = new Map<string, number>();
   const domainRoot = domain.replace(/^www\./, '').split('.')[0]?.toLowerCase() ?? '';
@@ -169,12 +278,20 @@ function collectNumbers(text: string): string[] {
 }
 
 function collectIntegrationCandidates(scraped: ScrapedData, text: string): string[] {
-  const fromLinks = scraped.links
-    .map((entry) => normalizeWhitespace(entry.split(':')[0] || ''))
-    .filter((label) => label.length >= 2 && label.length <= 30);
+  const out: string[] = [];
+  for (const entry of scraped.links) {
+    const [label, href] = entry.split(':').map((x) => normalizeWhitespace(x || ''));
+    const resolvedLabel = resolveIntegrationName(label);
+    if (resolvedLabel) out.push(resolvedLabel);
+    const resolvedHref = resolveIntegrationName(href);
+    if (resolvedHref) out.push(resolvedHref);
+  }
 
-  const fromKnownTools = KNOWN_TOOLS.filter((tool) => hasWholePhrase(text.toLowerCase(), tool.toLowerCase()));
-  return dedupeByNormalized([...fromLinks, ...fromKnownTools]).slice(0, 12);
+  for (const tool of KNOWN_TOOLS) {
+    if (hasWholePhrase(text.toLowerCase(), tool.toLowerCase())) out.push(tool);
+  }
+
+  return dedupeByNormalized(out).slice(0, 12);
 }
 
 function splitSentences(value: string): string[] {
@@ -205,6 +322,124 @@ function dedupeByNormalized(values: string[]): string[] {
   return out;
 }
 
+function cleanupFeatureLabel(value: string): string {
+  const tokens = value
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .map((token) => sanitizeFeatureToken(token))
+    .filter(Boolean)
+    .filter((token) => {
+      const lower = token.toLowerCase();
+      if (lower.length < 3 || lower.length > 16) return false;
+      if (STOP_WORDS.has(lower) || FEATURE_NOISE_WORDS.has(lower)) return false;
+      if (/^\d+$/.test(lower)) return false;
+      return true;
+    })
+    .slice(0, 4);
+
+  if (tokens.length === 0) return '';
+  return toTitleCase(tokens.join(' '));
+}
+
+function isStrongFeatureLabel(label: string): boolean {
+  if (!label) return false;
+  const words = label.split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 4) return false;
+  const lowerWords = words.map((w) => w.toLowerCase());
+  if (lowerWords.some((word) => FEATURE_NOISE_WORDS.has(word))) return false;
+  if (lowerWords.some((word) => /andthe|theand|withthe|forthe/.test(word))) return false;
+  if (lowerWords.some((word) => word.length > 16)) return false;
+  return true;
+}
+
+function sanitizeFeatureToken(token: string): string {
+  let lower = token.toLowerCase();
+  const connectors = ['and', 'the', 'for', 'with', 'from', 'into', 'across', 'to', 'of'];
+
+  for (const connector of connectors) {
+    if (lower.endsWith(connector) && lower.length - connector.length >= 3) {
+      lower = lower.slice(0, -connector.length);
+    }
+  }
+
+  for (const connector of connectors) {
+    const idx = lower.indexOf(connector);
+    if (idx > 2 && idx < lower.length - connector.length - 2) {
+      const left = lower.slice(0, idx);
+      const right = lower.slice(idx + connector.length);
+      lower = left.length >= right.length ? left : right;
+      break;
+    }
+  }
+
+  return lower.trim();
+}
+
+function featureLabelFromPhrase(phrase: string): string {
+  const verbLike = new Set(['make', 'move', 'define', 'review', 'understand', 'build', 'built', 'turn', 'plan', 'deploy', 'take']);
+  const tokens = phrase
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .map((token) => sanitizeFeatureToken(token))
+    .filter(Boolean)
+    .filter((token) => token.length >= 3 && !STOP_WORDS.has(token) && !FEATURE_NOISE_WORDS.has(token));
+
+  const prioritized = [...tokens.filter((token) => !verbLike.has(token)), ...tokens.filter((token) => verbLike.has(token))];
+  const label = toTitleCase(prioritized.slice(0, 3).join(' '));
+  return cleanupFeatureLabel(label);
+}
+
+function bestLabelSimilarity(label: string, candidates: string[]): number {
+  if (!label || candidates.length === 0) return 0;
+  let best = 0;
+  for (const candidate of candidates) {
+    best = Math.max(best, tokenOverlap(label, candidate));
+  }
+  return best;
+}
+
+function tokenOverlap(a: string, b: string): number {
+  const aTokens = new Set(a.toLowerCase().split(/\s+/).filter(Boolean));
+  const bTokens = new Set(b.toLowerCase().split(/\s+/).filter(Boolean));
+  if (aTokens.size === 0 || bTokens.size === 0) return 0;
+  let common = 0;
+  for (const token of aTokens) if (bTokens.has(token)) common += 1;
+  return common / Math.max(aTokens.size, bTokens.size);
+}
+
+function labelSpecificityScore(label: string, hints: GroundingHints): number {
+  const tokens = label.toLowerCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return 0;
+
+  const topTerms = new Set(hints.terms.slice(0, 20));
+  let score = 0;
+  for (const token of tokens) {
+    if (token.length >= 4) score += 1;
+    if (topTerms.has(token)) score += 1;
+    if (FEATURE_NOISE_WORDS.has(token) || STOP_WORDS.has(token)) score -= 2;
+  }
+  return score;
+}
+
+function synthesizeFeatureName(hints: GroundingHints, index: number): string {
+  const baseTerms = hints.terms
+    .filter((term) => term.length >= 4 && !STOP_WORDS.has(term) && !FEATURE_NOISE_WORDS.has(term))
+    .slice(0, 12);
+  if (baseTerms.length === 0) return `Feature ${index + 1}`;
+
+  const first = baseTerms[(index * 2) % baseTerms.length];
+  const second = baseTerms[(index * 2 + 1) % baseTerms.length];
+  const third = baseTerms[(index * 2 + 2) % baseTerms.length];
+  const composed = [first, second, third]
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(' ');
+  return toTitleCase(composed || `Feature ${index + 1}`);
+}
+
 function hasWholePhrase(haystackLower: string, phraseLower: string): boolean {
   const phrase = phraseLower.trim().split(/\s+/).map((part) => escapeRegex(part)).join('\\s+');
   if (!phrase) return false;
@@ -217,6 +452,31 @@ function toTitleCase(value: string): string {
     .filter(Boolean)
     .map((chunk) => chunk.charAt(0).toUpperCase() + chunk.slice(1))
     .join(' ');
+}
+
+function titleTokenize(value: string): string {
+  const normalized = value
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(' ');
+  return normalized ? toTitleCase(normalized) : '';
+}
+
+function normalizeToolKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function buildToolDictionary(): Record<string, string> {
+  const dict: Record<string, string> = {};
+  for (const tool of KNOWN_TOOLS) {
+    dict[normalizeToolKey(tool)] = tool;
+  }
+  for (const [alias, canonical] of Object.entries(INTEGRATION_ALIAS_MAP)) {
+    dict[normalizeToolKey(alias)] = canonical;
+  }
+  return dict;
 }
 
 function escapeRegex(input: string): string {

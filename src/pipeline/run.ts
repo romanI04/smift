@@ -140,10 +140,11 @@ async function run() {
     track('grounding', 'Grounding hints extracted', {
       terms: groundingHints.terms.length,
       phrases: groundingHints.phrases.length,
+      featureNameCandidates: groundingHints.featureNameCandidates.length,
       numbers: groundingHints.numbers.length,
       integrations: groundingHints.integrationCandidates.length,
     });
-    console.log(`  -> Grounding hints: ${groundingHints.terms.length} terms, ${groundingHints.phrases.length} phrases, ${groundingHints.numbers.length} numbers`);
+    console.log(`  -> Grounding hints: ${groundingHints.terms.length} terms, ${groundingHints.phrases.length} phrases, ${groundingHints.featureNameCandidates.length} names, ${groundingHints.numbers.length} numbers`);
 
     const domainPackSelection = selectDomainPack(scraped, packArg);
     track('pack', 'Domain pack selected', {

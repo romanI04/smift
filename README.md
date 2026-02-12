@@ -62,8 +62,10 @@ Generated artifacts land in `out/`:
 
 ## Grounding
 
-- The pipeline extracts source grounding hints (`terms`, `phrases`, `numbers`, `integrationCandidates`) from scraped content.
+- The pipeline extracts source grounding hints (`terms`, `phrases`, `featureNameCandidates`, `numbers`, `integrationCandidates`) from scraped content.
 - Script generation prompt and post-processing use grounding hints to reduce off-domain wording.
+- Feature names are canonicalized against grounded candidates; noisy labels fall back to synthesized term-based names.
+- Integrations are canonicalized through a known-tool resolver + alias mapping.
 - Quality report includes a `grounding` block with coverage and match stats so relevance is auditable per run.
 
 ## Docs

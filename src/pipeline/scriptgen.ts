@@ -4,9 +4,10 @@ import type {ScriptResult} from './script-types';
 import type {TemplateProfile} from './templates';
 import type {DomainPack} from './domain-packs';
 import {
+  canonicalizeFeatureName,
+  canonicalizeIntegrations,
   extractGroundingHints,
   hasGroundingSignal,
-  pickGroundedIntegration,
   pickGroundedNumber,
   pickGroundedPhrase,
   type GroundingHints,
@@ -140,7 +141,12 @@ export async function generateScript(
     hookLine2: parsed.hookLine2,
     hookKeyword: parsed.hookKeyword,
     features: parsed.features,
-    integrations: parsed.integrations.slice(0, 12),
+    integrations: canonicalizeIntegrations(
+      parsed.integrations,
+      groundingHints,
+      options.domainPack?.fallbackIntegrations ?? [],
+      12,
+    ),
     ctaUrl: parsed.ctaUrl,
     narrationSegments: parsed.narrationSegments,
     sceneWeights,
@@ -190,6 +196,7 @@ Concrete fields to include in demo lines: ${options.domainPack.concreteFields.jo
   const groundingBlock = `\nGrounding lexicon (use exact or very close terms):
 Terms: ${groundingHints.terms.slice(0, 18).join(', ') || 'none'}
 Phrases: ${groundingHints.phrases.slice(0, 10).join(' | ') || 'none'}
+Feature name candidates: ${groundingHints.featureNameCandidates.slice(0, 10).join(' | ') || 'none'}
 Numbers: ${groundingHints.numbers.slice(0, 8).join(', ') || 'none'}
 Integrations seen in source: ${groundingHints.integrationCandidates.slice(0, 8).join(', ') || 'none'}
 Hard requirement: features and narration must be grounded in this source lexicon; do not invent unrelated product nouns.`;
@@ -311,18 +318,10 @@ function enforceGrounding(candidate: any, groundingHints: GroundingHints): any {
     const phrase = pickGroundedPhrase(groundingHints, i);
     const num = pickGroundedNumber(groundingHints, i);
 
-    if (!feature?.appName) {
-      feature.appName = phrase ? toAppLabel(phrase) : `Feature ${i + 1}`;
-    }
-
-    if (feature?.appName && !hasGroundingSignal(feature.appName, groundingHints) && phrase) {
-      feature.appName = toAppLabel(phrase);
-    }
-
-    feature.appName = toAppLabel(feature.appName);
+    feature.appName = canonicalizeFeatureName(feature?.appName ?? phrase ?? `Feature ${i + 1}`, groundingHints, i);
     const dedupeKey = feature.appName.toLowerCase();
     if (usedNames.has(dedupeKey)) {
-      const fallback = phrase ? toAppLabel(phrase) : `Feature ${i + 1}`;
+      const fallback = canonicalizeFeatureName(phrase ?? `Feature ${i + 1}`, groundingHints, i + 1);
       feature.appName = `${fallback} ${i + 1}`.trim();
     }
     usedNames.add(feature.appName.toLowerCase());
@@ -338,15 +337,7 @@ function enforceGrounding(candidate: any, groundingHints: GroundingHints): any {
     }
   }
 
-  if (next.integrations.length < 2) {
-    for (let i = next.integrations.length; i < 2; i++) {
-      const integration = pickGroundedIntegration(groundingHints, i);
-      if (!integration) break;
-      if (!next.integrations.some((item: string) => item.toLowerCase() === integration.toLowerCase())) {
-        next.integrations.push(integration);
-      }
-    }
-  }
+  next.integrations = canonicalizeIntegrations(next.integrations, groundingHints, [], 12);
 
   for (let i = 3; i <= 6; i++) {
     if (!next.narrationSegments[i]) continue;
@@ -359,34 +350,4 @@ function enforceGrounding(candidate: any, groundingHints: GroundingHints): any {
   }
 
   return next;
-}
-
-function toMaxWords(text: string, maxWords: number): string {
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length <= maxWords) return text.trim();
-  return words.slice(0, maxWords).join(' ');
-}
-
-function titleCase(value: string): string {
-  return value
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
-
-function toAppLabel(value: string): string {
-  const blocked = new Set([
-    'the', 'and', 'for', 'with', 'from', 'this', 'that', 'your', 'you', 'our', 'into', 'one',
-    'they', 'their', 'there', 'behind', 'across', 'every', 'next', 'nextbig', 'best',
-  ]);
-  const tokens = value
-    .replace(/[^a-zA-Z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .map((token) => token.trim())
-    .filter(Boolean)
-    .filter((token) => token.length >= 3 && !blocked.has(token.toLowerCase()))
-    .slice(0, 3);
-  if (tokens.length === 0) return 'Core Feature';
-  return titleCase(tokens.join(' '));
 }

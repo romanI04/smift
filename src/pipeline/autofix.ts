@@ -2,9 +2,10 @@ import type {ScriptResult} from './script-types';
 import type {ScrapedData} from './scraper';
 import type {DomainPack} from './domain-packs';
 import {
+  canonicalizeFeatureName,
+  canonicalizeIntegrations,
   extractGroundingHints,
   hasGroundingSignal,
-  pickGroundedIntegration,
   pickGroundedNumber,
   pickGroundedPhrase,
   type GroundingHints,
@@ -61,6 +62,12 @@ export function autoFixScriptQuality(
 
   next.features = next.features.map((feature, idx) => {
     const updated = {...feature, demoLines: [...feature.demoLines]};
+    const canonicalName = canonicalizeFeatureName(updated.appName || `Feature ${idx + 1}`, groundingHints, idx);
+    if (canonicalName !== updated.appName) {
+      updated.appName = canonicalName;
+      actions.push(`Normalized feature name for feature ${idx + 1}.`);
+    }
+
     if (!updated.caption || countWords(updated.caption) > 6) {
       updated.caption = toMaxWords(updated.caption || 'Clear execution signal', 6);
       actions.push(`Shortened caption for feature ${idx + 1}.`);
@@ -119,16 +126,10 @@ export function autoFixScriptQuality(
     actions.push('Filled missing integrations using domain pack defaults.');
   }
 
-  if (next.integrations.length < 4) {
-    for (let i = 0; i < 4; i++) {
-      const groundedIntegration = pickGroundedIntegration(groundingHints, i);
-      if (!groundedIntegration) break;
-      if (!next.integrations.some((item) => item.toLowerCase() === groundedIntegration.toLowerCase())) {
-        next.integrations.push(groundedIntegration);
-        actions.push(`Added grounded integration "${groundedIntegration}".`);
-      }
-      if (next.integrations.length >= 6) break;
-    }
+  const canonicalIntegrations = canonicalizeIntegrations(next.integrations, groundingHints, domainPack.fallbackIntegrations, 12);
+  if (canonicalIntegrations.join('|') !== next.integrations.join('|')) {
+    next.integrations = canonicalIntegrations;
+    actions.push('Canonicalized integrations using source and known tools.');
   }
 
   if (next.integrations.length > 12) {

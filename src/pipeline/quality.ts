@@ -2,7 +2,12 @@ import type {ScrapedData} from './scraper';
 import type {ScriptResult} from './script-types';
 import type {TemplateProfile} from './templates';
 import type {DomainPack} from './domain-packs';
-import {summarizeGroundingUsage, type GroundingHints} from './grounding';
+import {
+  canonicalizeIntegrations,
+  hasGroundingSignal,
+  summarizeGroundingUsage,
+  type GroundingHints,
+} from './grounding';
 
 export interface QualityReport {
   score: number;
@@ -150,17 +155,26 @@ export function scoreScriptQuality(args: ScoreArgs): QualityReport {
     score -= 4;
   }
 
-  if (script.integrations.length < 2 || script.integrations.length > 12) {
-    warnings.push('Integrations should contain 2-12 items.');
-    score -= 3;
-  }
-
-  const integrationOverlap = script.integrations.some((item) =>
+  const normalizedScriptIntegrations = groundingHints
+    ? canonicalizeIntegrations(script.integrations, groundingHints, domainPack.fallbackIntegrations, 12)
+    : script.integrations;
+  const integrationOverlap = normalizedScriptIntegrations.some((item) =>
     domainPack.fallbackIntegrations.some((candidate) => normalize(item) === normalize(candidate)),
   );
   if (!integrationOverlap) {
-    warnings.push(`No integrations overlap with domain pack defaults for "${domainPack.id}".`);
-    score -= 2;
+    const groundingOverlap = groundingHints
+      ? normalizedScriptIntegrations.some((item) =>
+        groundingHints.integrationCandidates.some((candidate) => normalize(item) === normalize(candidate)))
+      : false;
+    if (!groundingOverlap) {
+      warnings.push(`No integrations overlap with domain pack defaults for "${domainPack.id}".`);
+      score -= 2;
+    }
+  }
+
+  if (normalizedScriptIntegrations.length < 2 || normalizedScriptIntegrations.length > 12) {
+    warnings.push('Integrations should contain 2-12 items.');
+    score -= 3;
   }
 
   if (script.domainPackId && script.domainPackId !== domainPack.id) {
@@ -172,17 +186,38 @@ export function scoreScriptQuality(args: ScoreArgs): QualityReport {
     const grounding = summarizeGroundingUsage(script, groundingHints);
     notes.push(`Grounding coverage: ${grounding.coverage} (${grounding.matchedTerms}/${grounding.totalTerms} terms, ${grounding.matchedPhrases}/${grounding.totalPhrases} phrases).`);
 
-    if (grounding.coverage < 0.12) {
+    if (grounding.coverage < 0.16) {
       warnings.push('Script appears weakly grounded in source language.');
-      score -= 8;
-    } else if (grounding.coverage < 0.2) {
+      score -= 10;
+    } else if (grounding.coverage < 0.26) {
       warnings.push('Grounding coverage is low; consider adding more source-specific wording.');
-      score -= 4;
+      score -= 5;
     }
 
     if (grounding.totalNumbers > 0 && grounding.matchedNumbers === 0) {
       warnings.push('Script misses numeric signals available from source content.');
       score -= 3;
+    }
+
+    let groundedFeatureCount = 0;
+    let numberedFeatureCount = 0;
+    for (const feature of script.features) {
+      const featureText = [feature.appName, feature.caption, ...feature.demoLines].join(' ');
+      if (hasGroundingSignal(featureText, groundingHints)) groundedFeatureCount += 1;
+      if (/\d/.test(featureText)) numberedFeatureCount += 1;
+    }
+
+    if (groundedFeatureCount < 2) {
+      warnings.push('Most feature blocks are not grounded in extracted source language.');
+      score -= 8;
+    } else if (groundedFeatureCount < 3) {
+      warnings.push('One feature block appears weakly grounded in source language.');
+      score -= 4;
+    }
+
+    if (grounding.totalNumbers > 0 && numberedFeatureCount === 0) {
+      warnings.push('Feature demos should include at least one numeric source signal.');
+      score -= 4;
     }
   }
 

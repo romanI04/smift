@@ -11,9 +11,12 @@ import dotenv from 'dotenv';
 dotenv.config({path: path.resolve(__dirname, '../../../../.env')});
 
 async function run() {
-  const url = process.argv[2];
+  const args = process.argv.slice(2);
+  const voiceFlag = args.find(a => a.startsWith('--voice='));
+  const voiceEngine = voiceFlag ? voiceFlag.split('=')[1] as 'elevenlabs' | 'openai' : undefined;
+  const url = args.find(a => !a.startsWith('--'));
   if (!url) {
-    console.error('Usage: npx ts-node src/pipeline/run.ts <url>');
+    console.error('Usage: npm run generate -- <url> [--voice=elevenlabs|openai]');
     process.exit(1);
   }
 
@@ -48,7 +51,7 @@ async function run() {
   let voiceResult: {path: string; durationMs: number} | null = null;
 
   try {
-    voiceResult = await generateVoice(script.narration, {outputPath: audioPath});
+    voiceResult = await generateVoice(script.narration, {outputPath: audioPath, engine: voiceEngine});
     console.log(`  -> Audio: ${voiceResult.path} (${voiceResult.durationMs}ms)`);
 
     // Copy voice to public/ so Remotion's staticFile() can find it

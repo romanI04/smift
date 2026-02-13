@@ -21,6 +21,7 @@ import {normalizeScriptPayload, toPersistedScript} from '../pipeline/script-io';
 type JobStatus = 'queued' | 'running' | 'completed' | 'failed';
 type JobMode = 'generate' | 'rerender';
 type VersionOutcome = 'accepted' | 'rejected';
+type PromotionPolicySegment = 'core-icp' | 'broad';
 
 interface JobRecord {
   id: string;
@@ -45,14 +46,29 @@ interface JobRecord {
       sourceJobId?: string;
       autoPromoteIfWinner?: boolean;
       autoPromoteMinConfidence?: number;
+      autoPromoteSegment?: PromotionPolicySegment;
       autoPromoteEvaluatedAt?: string;
       autoPromoteDecision?: string;
     };
   logs: string[];
 }
 
+interface PromotionPolicyCalibration {
+  at: string;
+  segment: PromotionPolicySegment;
+  accepted: number;
+  rejected: number;
+  total: number;
+  acceptRate: number;
+  evidenceWeight: number;
+  recommendedMinConfidence: number;
+  applied: boolean;
+}
+
 interface AutoPromotePolicy {
   minConfidence: number;
+  segmentThresholds: Record<PromotionPolicySegment, number>;
+  lastCalibration: Partial<Record<PromotionPolicySegment, PromotionPolicyCalibration>>;
 }
 
 interface VersionMetaEntry {
@@ -125,6 +141,7 @@ interface AutoImproveConfig {
   rerenderStrict: boolean;
   autoPromoteIfWinner: boolean;
   autoPromoteMinConfidence: number;
+  autoPromoteSegment: PromotionPolicySegment;
 }
 
 interface AutoImproveIteration {
@@ -169,6 +186,7 @@ const cwd = path.resolve(__dirname, '../..');
 const outDir = path.join(cwd, 'out');
 const jobsDir = path.join(outDir, 'jobs');
 const DEFAULT_AUTO_PROMOTE_MIN_CONFIDENCE = 0.75;
+const CORE_ICP_PACK_IDS = new Set<DomainPackId>(['devtools', 'b2b-saas', 'ecommerce-retail']);
 if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, {recursive: true});
 if (!fs.existsSync(jobsDir)) fs.mkdirSync(jobsDir, {recursive: true});
 
@@ -373,7 +391,9 @@ const server = http.createServer(async (req, res) => {
       }
       const payload = await readJsonBody(req);
       const policy = readProjectAutoPromotePolicy(getRootOutputName(job));
-      const config = resolveAutoImproveConfig(payload, job.options.strict, policy.minConfidence);
+      const segment = inferPromotionSegmentForJob(job);
+      const defaultMinConfidence = effectiveMinConfidenceForSegment(policy, segment);
+      const config = resolveAutoImproveConfig(payload, job.options.strict, defaultMinConfidence, segment);
       const result = await runAutoImproveLoop(job, config);
       if (!result.ok) {
         return sendJson(res, result.code, {error: result.error});
@@ -657,9 +677,11 @@ const server = http.createServer(async (req, res) => {
       const rootOutputName = decodeURIComponent(parts[2] || '');
       if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
       if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
+      const policy = readProjectAutoPromotePolicy(rootOutputName);
       return sendJson(res, 200, {
         rootOutputName,
-        policy: readProjectAutoPromotePolicy(rootOutputName),
+        policy,
+        calibrationPreview: buildPromotionPolicyCalibrationPreview(rootOutputName, policy),
       });
     }
 
@@ -670,26 +692,101 @@ const server = http.createServer(async (req, res) => {
       if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
       const payload = await readJsonBody(req);
       const metadata = readVersionMetadata(rootOutputName);
+      const segmentRaw = String(payload.segment || '').trim().toLowerCase();
+      const segment = isPromotionPolicySegment(segmentRaw) ? segmentRaw : null;
       const previous = metadata.promotionPolicy.minConfidence;
       const next = normalizeAutoPromoteMinConfidence(payload.minConfidence, metadata.promotionPolicy.minConfidence);
-      metadata.promotionPolicy = {
-        minConfidence: next,
-      };
+      metadata.promotionPolicy.minConfidence = next;
+      if (segment) {
+        metadata.promotionPolicy.segmentThresholds[segment] = next;
+      } else {
+        metadata.promotionPolicy.segmentThresholds['core-icp'] = next;
+        metadata.promotionPolicy.segmentThresholds.broad = next;
+      }
       metadata.updatedAt = new Date().toISOString();
       writeVersionMetadata(rootOutputName, metadata);
       appendProjectAudit(rootOutputName, {
         type: 'autopromote-policy-updated',
         jobId: 'policy',
         sourceJobId: null,
-        reason: `Auto-promote min confidence set to ${next.toFixed(2)}`,
+        reason: segment
+          ? `Auto-promote min confidence set to ${next.toFixed(2)} for ${segment}`
+          : `Auto-promote min confidence set to ${next.toFixed(2)} for all segments`,
         details: {
           previousMinConfidence: previous,
           minConfidence: next,
+          segment: segment || 'all',
         },
       });
       return sendJson(res, 200, {
         rootOutputName,
         policy: metadata.promotionPolicy,
+      });
+    }
+
+    if (method === 'POST' && /^\/api\/projects\/[^/]+\/promotion-policy\/calibrate$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const rootOutputName = decodeURIComponent(parts[2] || '');
+      if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
+      if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
+      const payload = await readJsonBody(req);
+      const segmentRaw = String(payload.segment || 'core-icp').trim().toLowerCase();
+      if (!isPromotionPolicySegment(segmentRaw)) {
+        return sendJson(res, 400, {error: 'segment must be core-icp or broad'});
+      }
+      const apply = Boolean(payload.apply);
+      const metadata = readVersionMetadata(rootOutputName);
+      const policy = metadata.promotionPolicy;
+      const statsBySegment = collectSegmentOutcomeStats(rootOutputName);
+      const stats = statsBySegment[segmentRaw];
+      const recommendation = recommendSegmentMinConfidence(stats);
+      const current = effectiveMinConfidenceForSegment(policy, segmentRaw);
+      const calibration: PromotionPolicyCalibration = {
+        at: new Date().toISOString(),
+        segment: segmentRaw,
+        accepted: stats.accepted,
+        rejected: stats.rejected,
+        total: stats.total,
+        acceptRate: stats.acceptRate,
+        evidenceWeight: recommendation.evidenceWeight,
+        recommendedMinConfidence: recommendation.recommended,
+        applied: apply,
+      };
+      policy.lastCalibration[segmentRaw] = calibration;
+      if (apply) {
+        policy.segmentThresholds[segmentRaw] = recommendation.recommended;
+        policy.minConfidence = recommendation.recommended;
+        metadata.updatedAt = calibration.at;
+        writeVersionMetadata(rootOutputName, metadata);
+        appendProjectAudit(rootOutputName, {
+          type: 'autopromote-policy-updated',
+          jobId: 'policy',
+          sourceJobId: null,
+          reason: `Calibrated ${segmentRaw} min confidence to ${recommendation.recommended.toFixed(2)}`,
+          details: {
+            segment: segmentRaw,
+            previousMinConfidence: current,
+            minConfidence: recommendation.recommended,
+            accepted: stats.accepted,
+            rejected: stats.rejected,
+            total: stats.total,
+            acceptRate: stats.acceptRate,
+            evidenceWeight: recommendation.evidenceWeight,
+          },
+        });
+      } else {
+        metadata.updatedAt = calibration.at;
+        writeVersionMetadata(rootOutputName, metadata);
+      }
+      return sendJson(res, 200, {
+        rootOutputName,
+        segment: segmentRaw,
+        apply,
+        currentMinConfidence: current,
+        recommendedMinConfidence: recommendation.recommended,
+        stats,
+        evidenceWeight: recommendation.evidenceWeight,
+        policy,
       });
     }
 
@@ -889,9 +986,13 @@ function createRerenderJob(
   const strict = payload.strict === undefined ? sourceJob.options.strict : Boolean(payload.strict);
   const autoPromoteIfWinner = Boolean(payload.autoPromoteIfWinner);
   const projectPolicy = readProjectAutoPromotePolicy(rootOutputName);
+  const requestedSegment = String(payload.autoPromoteSegment || '').trim().toLowerCase();
+  const autoPromoteSegment = isPromotionPolicySegment(requestedSegment)
+    ? requestedSegment
+    : inferPromotionSegmentForJob(sourceJob);
   const autoPromoteMinConfidence = normalizeAutoPromoteMinConfidence(
     payload.autoPromoteMinConfidence,
-    projectPolicy.minConfidence,
+    effectiveMinConfidenceForSegment(projectPolicy, autoPromoteSegment),
   );
 
   return {
@@ -913,6 +1014,7 @@ function createRerenderJob(
       sourceJobId: sourceJob.id,
       autoPromoteIfWinner,
       autoPromoteMinConfidence,
+      autoPromoteSegment,
     },
     logs: [],
   };
@@ -1103,6 +1205,7 @@ function queueVersionedRerenderFromScript(args: {
       strict: rerenderJob.options.strict,
       autoPromoteIfWinner: Boolean(rerenderJob.options.autoPromoteIfWinner),
       autoPromoteMinConfidence: rerenderJob.options.autoPromoteMinConfidence,
+      autoPromoteSegment: rerenderJob.options.autoPromoteSegment,
     },
   });
   tickQueue();
@@ -1121,9 +1224,14 @@ function resolveAutoImproveConfig(
   payload: Record<string, unknown>,
   defaultStrict: boolean,
   defaultAutoPromoteMinConfidence: number,
+  defaultAutoPromoteSegment: PromotionPolicySegment,
 ): AutoImproveConfig {
   const strict = payload.strict === undefined ? defaultStrict : Boolean(payload.strict);
   const defaultMaxWarnings = strict ? 0 : 3;
+  const requestedSegment = String(payload.autoPromoteSegment || '').trim().toLowerCase();
+  const autoPromoteSegment = isPromotionPolicySegment(requestedSegment)
+    ? requestedSegment
+    : defaultAutoPromoteSegment;
   return {
     maxSteps: clampInt(payload.maxSteps, 1, 8, 3),
     targetScore: clampInt(payload.targetScore, 70, 100, 90),
@@ -1139,6 +1247,7 @@ function resolveAutoImproveConfig(
       payload.autoPromoteMinConfidence,
       defaultAutoPromoteMinConfidence,
     ),
+    autoPromoteSegment,
   };
 }
 
@@ -1166,6 +1275,7 @@ async function runAutoImproveLoop(
           version: number | null;
           autoPromoteIfWinner: boolean;
           autoPromoteMinConfidence: number;
+          autoPromoteSegment: PromotionPolicySegment;
         };
         quality: ReturnType<typeof qualitySummaryFor>;
         artifacts: ReturnType<typeof artifactsFor>;
@@ -1210,6 +1320,7 @@ async function runAutoImproveLoop(
     version: number | null;
     autoPromoteIfWinner: boolean;
     autoPromoteMinConfidence: number;
+    autoPromoteSegment: PromotionPolicySegment;
   } = {
     queued: false,
     reason: 'disabled',
@@ -1219,6 +1330,7 @@ async function runAutoImproveLoop(
     version: null,
     autoPromoteIfWinner: config.autoPromoteIfWinner,
     autoPromoteMinConfidence: config.autoPromoteMinConfidence,
+    autoPromoteSegment: config.autoPromoteSegment,
   };
 
   for (let step = 1; step <= config.maxSteps; step++) {
@@ -1341,6 +1453,7 @@ async function runAutoImproveLoop(
         voice: job.options.voice,
         autoPromoteIfWinner: config.autoPromoteIfWinner,
         autoPromoteMinConfidence: config.autoPromoteMinConfidence,
+        autoPromoteSegment: config.autoPromoteSegment,
       },
       generationMode: 'auto-improve-validation',
       versioningSource: 'auto-improve',
@@ -1354,6 +1467,7 @@ async function runAutoImproveLoop(
       version: queued.version,
       autoPromoteIfWinner: config.autoPromoteIfWinner,
       autoPromoteMinConfidence: config.autoPromoteMinConfidence,
+      autoPromoteSegment: config.autoPromoteSegment,
     };
   } else if (!config.autoRerender) {
     rerenderResult = {
@@ -1365,6 +1479,7 @@ async function runAutoImproveLoop(
       version: null,
       autoPromoteIfWinner: config.autoPromoteIfWinner,
       autoPromoteMinConfidence: config.autoPromoteMinConfidence,
+      autoPromoteSegment: config.autoPromoteSegment,
     };
   } else {
     rerenderResult = {
@@ -1376,6 +1491,7 @@ async function runAutoImproveLoop(
       version: null,
       autoPromoteIfWinner: config.autoPromoteIfWinner,
       autoPromoteMinConfidence: config.autoPromoteMinConfidence,
+      autoPromoteSegment: config.autoPromoteSegment,
     };
   }
 
@@ -1509,12 +1625,152 @@ function normalizeAutoPromoteMinConfidence(value: unknown, fallback: number): nu
   return Number(Math.max(0, Math.min(1, parsed)).toFixed(2));
 }
 
+function isPromotionPolicySegment(value: unknown): value is PromotionPolicySegment {
+  return value === 'core-icp' || value === 'broad';
+}
+
 function normalizeAutoPromotePolicy(input: unknown): AutoPromotePolicy {
   const source = input && typeof input === 'object'
-    ? (input as {minConfidence?: unknown})
+    ? (input as {
+      minConfidence?: unknown;
+      segmentThresholds?: Record<string, unknown>;
+      lastCalibration?: Record<string, unknown>;
+    })
     : {};
+  const minConfidence = normalizeAutoPromoteMinConfidence(source.minConfidence, DEFAULT_AUTO_PROMOTE_MIN_CONFIDENCE);
+  const segmentThresholdsRaw = source.segmentThresholds && typeof source.segmentThresholds === 'object'
+    ? source.segmentThresholds
+    : {};
+  const segmentThresholds: Record<PromotionPolicySegment, number> = {
+    'core-icp': normalizeAutoPromoteMinConfidence(segmentThresholdsRaw['core-icp'], minConfidence),
+    broad: normalizeAutoPromoteMinConfidence(segmentThresholdsRaw.broad, minConfidence),
+  };
+  const normalizedCalibration: Partial<Record<PromotionPolicySegment, PromotionPolicyCalibration>> = {};
+  const calibrationRaw = source.lastCalibration && typeof source.lastCalibration === 'object'
+    ? source.lastCalibration
+    : {};
+  for (const segment of ['core-icp', 'broad'] as PromotionPolicySegment[]) {
+    const item = calibrationRaw[segment];
+    if (!item || typeof item !== 'object') continue;
+    const typed = item as Partial<PromotionPolicyCalibration>;
+    normalizedCalibration[segment] = {
+      at: String(typed.at || ''),
+      segment,
+      accepted: clampInt(typed.accepted, 0, 10000, 0),
+      rejected: clampInt(typed.rejected, 0, 10000, 0),
+      total: clampInt(typed.total, 0, 10000, 0),
+      acceptRate: normalizeAutoPromoteMinConfidence(typed.acceptRate, 0),
+      evidenceWeight: normalizeAutoPromoteMinConfidence(typed.evidenceWeight, 0),
+      recommendedMinConfidence: normalizeAutoPromoteMinConfidence(
+        typed.recommendedMinConfidence,
+        segmentThresholds[segment],
+      ),
+      applied: Boolean(typed.applied),
+    };
+  }
   return {
-    minConfidence: normalizeAutoPromoteMinConfidence(source.minConfidence, DEFAULT_AUTO_PROMOTE_MIN_CONFIDENCE),
+    minConfidence,
+    segmentThresholds,
+    lastCalibration: normalizedCalibration,
+  };
+}
+
+function inferPromotionSegmentFromDomainPack(pack: unknown): PromotionPolicySegment {
+  const normalizedPack = String(pack || '').trim().toLowerCase();
+  if (CORE_ICP_PACK_IDS.has(normalizedPack as DomainPackId)) return 'core-icp';
+  return 'broad';
+}
+
+function inferPromotionSegmentForVersion(version: ProjectVersion): PromotionPolicySegment {
+  return inferPromotionSegmentFromDomainPack(version.quality.domainPack);
+}
+
+function inferPromotionSegmentForJob(job: JobRecord): PromotionPolicySegment {
+  return inferPromotionSegmentFromDomainPack(qualitySummaryFor(job).domainPack);
+}
+
+function effectiveMinConfidenceForSegment(
+  policy: AutoPromotePolicy,
+  segment: PromotionPolicySegment,
+): number {
+  const candidate = policy.segmentThresholds?.[segment];
+  return normalizeAutoPromoteMinConfidence(candidate, policy.minConfidence);
+}
+
+function collectSegmentOutcomeStats(rootOutputName: string) {
+  const stats: Record<PromotionPolicySegment, {accepted: number; rejected: number; total: number; acceptRate: number}> = {
+    'core-icp': {accepted: 0, rejected: 0, total: 0, acceptRate: 0},
+    broad: {accepted: 0, rejected: 0, total: 0, acceptRate: 0},
+  };
+  const versions = listProjectVersions(rootOutputName);
+  for (const version of versions) {
+    const outcome = version.meta.outcome;
+    if (outcome !== 'accepted' && outcome !== 'rejected') continue;
+    const segment = inferPromotionSegmentForVersion(version);
+    const bucket = stats[segment];
+    bucket.total += 1;
+    if (outcome === 'accepted') bucket.accepted += 1;
+    else bucket.rejected += 1;
+  }
+  for (const segment of ['core-icp', 'broad'] as PromotionPolicySegment[]) {
+    const bucket = stats[segment];
+    bucket.acceptRate = bucket.total > 0 ? Number((bucket.accepted / bucket.total).toFixed(2)) : 0;
+  }
+  return stats;
+}
+
+function recommendSegmentMinConfidence(
+  stat: {accepted: number; rejected: number; total: number; acceptRate: number},
+): {recommended: number; evidenceWeight: number} {
+  if (stat.total === 0) {
+    return {
+      recommended: DEFAULT_AUTO_PROMOTE_MIN_CONFIDENCE,
+      evidenceWeight: 0,
+    };
+  }
+  const evidenceWeight = normalizeAutoPromoteMinConfidence(stat.total / 8, 0);
+  const target = normalizeAutoPromoteMinConfidence(
+    0.75 + ((0.6 - stat.acceptRate) * 0.5),
+    DEFAULT_AUTO_PROMOTE_MIN_CONFIDENCE,
+  );
+  const blended = normalizeAutoPromoteMinConfidence(
+    (1 - evidenceWeight) * DEFAULT_AUTO_PROMOTE_MIN_CONFIDENCE + (evidenceWeight * target),
+    DEFAULT_AUTO_PROMOTE_MIN_CONFIDENCE,
+  );
+  return {
+    recommended: Math.max(0.55, Math.min(0.9, blended)),
+    evidenceWeight,
+  };
+}
+
+function buildPromotionPolicyCalibrationPreview(rootOutputName: string, policy: AutoPromotePolicy) {
+  const statsBySegment = collectSegmentOutcomeStats(rootOutputName);
+  const segments: Array<{
+    segment: PromotionPolicySegment;
+    currentMinConfidence: number;
+    recommendedMinConfidence: number;
+    accepted: number;
+    rejected: number;
+    total: number;
+    acceptRate: number;
+    evidenceWeight: number;
+  }> = [];
+  for (const segment of ['core-icp', 'broad'] as PromotionPolicySegment[]) {
+    const stats = statsBySegment[segment];
+    const recommendation = recommendSegmentMinConfidence(stats);
+    segments.push({
+      segment,
+      currentMinConfidence: effectiveMinConfidenceForSegment(policy, segment),
+      recommendedMinConfidence: recommendation.recommended,
+      accepted: stats.accepted,
+      rejected: stats.rejected,
+      total: stats.total,
+      acceptRate: stats.acceptRate,
+      evidenceWeight: recommendation.evidenceWeight,
+    });
+  }
+  return {
+    segments,
   };
 }
 
@@ -1526,9 +1782,13 @@ function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watch
   const now = new Date().toISOString();
   const rootOutputName = getRootOutputName(job);
   const projectPolicy = readProjectAutoPromotePolicy(rootOutputName);
+  const segment = job.options.autoPromoteSegment && isPromotionPolicySegment(job.options.autoPromoteSegment)
+    ? job.options.autoPromoteSegment
+    : inferPromotionSegmentForJob(job);
+  const policyMinConfidence = effectiveMinConfidenceForSegment(projectPolicy, segment);
   const minConfidence = normalizeAutoPromoteMinConfidence(
     job.options.autoPromoteMinConfidence,
-    projectPolicy.minConfidence,
+    policyMinConfidence,
   );
   const sourceJobId = job.options.sourceJobId ?? null;
   const markEvaluation = (decision: string) => {
@@ -1545,7 +1805,7 @@ function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watch
       jobId: job.id,
       sourceJobId,
       reason,
-      details: {status: job.status, source, minConfidence},
+      details: {status: job.status, source, minConfidence, segment},
     });
     markEvaluation(`skipped:${reason}`);
     return;
@@ -1562,7 +1822,7 @@ function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watch
       jobId: job.id,
       sourceJobId,
       reason,
-      details: {source, confidence, minConfidence},
+      details: {source, confidence, minConfidence, segment},
     });
     markEvaluation(`skipped:${reason}`);
     return;
@@ -1575,7 +1835,7 @@ function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watch
       jobId: job.id,
       sourceJobId,
       reason,
-      details: {recommendedId, source, confidence, minConfidence},
+      details: {recommendedId, source, confidence, minConfidence, segment},
     });
     markEvaluation(`skipped:${reason}`);
     return;
@@ -1588,7 +1848,7 @@ function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watch
       jobId: job.id,
       sourceJobId,
       reason,
-      details: {source, confidence, minConfidence},
+      details: {source, confidence, minConfidence, segment},
     });
     markEvaluation(`skipped:${reason}`);
     return;
@@ -1602,7 +1862,7 @@ function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watch
       jobId: job.id,
       sourceJobId,
       reason: promoted.error,
-      details: {source},
+      details: {source, confidence, minConfidence, segment},
     });
     markEvaluation(`failed:${promoted.error}`);
     return;
@@ -1619,6 +1879,7 @@ function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watch
       source,
       confidence,
       minConfidence,
+      segment,
     },
   });
   markEvaluation('promoted');
@@ -2807,8 +3068,14 @@ function renderHtml() {
             <button id="runAutoImprove" class="secondary">Run Auto Improve</button>
           </div>
           <div class="row">
+            <select id="promotionSegment">
+              <option value="core-icp">policy segment: core-icp</option>
+              <option value="broad">policy segment: broad</option>
+            </select>
             <button id="savePromotionPolicy" class="secondary">Save Promote Policy</button>
             <button id="loadPromotionPolicy" class="secondary">Load Promote Policy</button>
+            <button id="previewPolicyCalibration" class="secondary">Preview Calibration</button>
+            <button id="applyPolicyCalibration" class="secondary">Apply Calibration</button>
           </div>
           <div id="promotionPolicyBox" class="quality-box muted">No promotion policy loaded.</div>
           <div id="fixPlanBox" class="quality-box muted">No section improvement plan yet.</div>
@@ -2881,6 +3148,7 @@ function renderHtml() {
   const versionsList = document.getElementById('versionsList');
   const recommendationBox = document.getElementById('recommendationBox');
   const promotionPolicyBox = document.getElementById('promotionPolicyBox');
+  const promotionSegmentField = document.getElementById('promotionSegment');
   const fixPlanBox = document.getElementById('fixPlanBox');
   const autoImproveBox = document.getElementById('autoImproveBox');
   const auditBox = document.getElementById('auditBox');
@@ -3037,6 +3305,30 @@ function renderHtml() {
     return Math.max(0, Math.min(1, Math.round(raw * 100) / 100));
   }
 
+  function readPromotionSegmentInput() {
+    const value = String(promotionSegmentField.value || '').trim();
+    return value === 'broad' ? 'broad' : 'core-icp';
+  }
+
+  function policyThresholdForSegment(policy, segment) {
+    if (!policy || !policy.segmentThresholds) return null;
+    const raw = segment === 'broad'
+      ? policy.segmentThresholds.broad
+      : policy.segmentThresholds['core-icp'];
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return null;
+    return Math.max(0, Math.min(1, Math.round(parsed * 100) / 100));
+  }
+
+  function syncPolicyInputFromSegment() {
+    if (!currentPromotionPolicy) return;
+    const segment = readPromotionSegmentInput();
+    const threshold = policyThresholdForSegment(currentPromotionPolicy, segment);
+    if (threshold != null) {
+      byId('autoPromoteMinConfidence').value = String(threshold.toFixed(2));
+    }
+  }
+
   function renderPromotionPolicy(policy, sourceText) {
     if (!policy || typeof policy.minConfidence !== 'number') {
       currentPromotionPolicy = null;
@@ -3045,12 +3337,30 @@ function renderHtml() {
       return;
     }
     currentPromotionPolicy = policy;
-    byId('autoPromoteMinConfidence').value = String(policy.minConfidence.toFixed(2));
-    promotionPolicyBox.className = 'quality-box';
-    promotionPolicyBox.textContent = [
-      'Auto-promote min confidence: ' + policy.minConfidence.toFixed(2),
+    syncPolicyInputFromSegment();
+    const core = policyThresholdForSegment(policy, 'core-icp');
+    const broad = policyThresholdForSegment(policy, 'broad');
+    const selectedSegment = readPromotionSegmentInput();
+    const selectedThreshold = policyThresholdForSegment(policy, selectedSegment);
+    const lines = [
+      'Global min confidence: ' + Number(policy.minConfidence || 0).toFixed(2),
+      'core-icp min confidence: ' + (core == null ? 'n/a' : core.toFixed(2)),
+      'broad min confidence: ' + (broad == null ? 'n/a' : broad.toFixed(2)),
+      'Selected segment (' + selectedSegment + ') threshold: ' + (selectedThreshold == null ? 'n/a' : selectedThreshold.toFixed(2)),
       sourceText || 'Policy source: project setting',
-    ].join('\\n');
+    ];
+    if (policy.lastCalibration && policy.lastCalibration[selectedSegment]) {
+      const c = policy.lastCalibration[selectedSegment];
+      lines.push(
+        'Last calibration (' + selectedSegment + '): '
+        + 'recommended=' + Number(c.recommendedMinConfidence || 0).toFixed(2)
+        + ', accepted=' + Number(c.accepted || 0)
+        + ', rejected=' + Number(c.rejected || 0)
+        + ', total=' + Number(c.total || 0),
+      );
+    }
+    promotionPolicyBox.className = 'quality-box';
+    promotionPolicyBox.textContent = lines.join('\\n');
   }
 
   function setCurrentRoot(rootOutputName) {
@@ -3199,7 +3509,10 @@ function renderHtml() {
       promotionPolicyBox.textContent = data.error || 'Promotion policy fetch failed';
       return null;
     }
-    renderPromotionPolicy(data.policy, 'Policy source: project setting');
+    const previewText = (data.calibrationPreview && Array.isArray(data.calibrationPreview.segments))
+      ? ('Policy source: project setting · preview segments=' + data.calibrationPreview.segments.length)
+      : 'Policy source: project setting';
+    renderPromotionPolicy(data.policy, previewText);
     return data;
   }
 
@@ -3209,10 +3522,11 @@ function renderHtml() {
       return null;
     }
     const minConfidence = readAutoPromoteMinConfidenceInput();
+    const segment = readPromotionSegmentInput();
     const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/promotion-policy', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({minConfidence})
+      body: JSON.stringify({minConfidence, segment})
     });
     const data = await res.json();
     if (!res.ok) {
@@ -3224,6 +3538,45 @@ function renderHtml() {
     }
     renderPromotionPolicy(data.policy, 'Policy source: saved to project');
     setStatus('Promotion policy saved', 'ok');
+    setOutput(data);
+    await fetchAudit();
+    return data;
+  }
+
+  async function calibratePromotionPolicy(apply) {
+    if (!currentRootOutputName) {
+      setStatus('No project root selected', 'bad');
+      return null;
+    }
+    const segment = readPromotionSegmentInput();
+    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/promotion-policy/calibrate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({segment, apply: Boolean(apply)})
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('Policy calibration failed', 'bad');
+      promotionPolicyBox.className = 'quality-box bad';
+      promotionPolicyBox.textContent = data.error || 'Policy calibration failed';
+      setOutput(data);
+      return null;
+    }
+    if (data.policy) {
+      renderPromotionPolicy(
+        data.policy,
+        (apply ? 'Calibration applied' : 'Calibration preview')
+          + ' · segment=' + segment
+          + ' · recommended=' + Number(data.recommendedMinConfidence || 0).toFixed(2),
+      );
+    }
+    const stats = data.stats || {};
+    setStatus(
+      (apply ? 'Policy calibrated' : 'Calibration preview ready')
+        + ' (' + segment + ', accepted=' + Number(stats.accepted || 0)
+        + ', rejected=' + Number(stats.rejected || 0) + ')',
+      'ok',
+    );
     setOutput(data);
     await fetchAudit();
     return data;
@@ -3505,7 +3858,8 @@ function renderHtml() {
       quality: document.getElementById('quality').value,
       strict: document.getElementById('strict').value === 'true',
       voice: 'none',
-      autoPromoteMinConfidence: readAutoPromoteMinConfidenceInput()
+      autoPromoteMinConfidence: readAutoPromoteMinConfidenceInput(),
+      autoPromoteSegment: readPromotionSegmentInput()
     };
     const res = await fetch('/api/jobs/' + currentId + '/rerender', {
       method: 'POST',
@@ -3596,6 +3950,7 @@ function renderHtml() {
       lines.push('Rerender: ' + (data.rerender.queued ? ('queued ' + data.rerender.id + ' (v' + data.rerender.version + ')') : data.rerender.reason));
       lines.push('Auto promote if winner: ' + String(Boolean(data.rerender.autoPromoteIfWinner)));
       lines.push('Auto promote min confidence: ' + String(data.rerender.autoPromoteMinConfidence));
+      lines.push('Auto promote segment: ' + String(data.rerender.autoPromoteSegment || 'core-icp'));
     }
     if (data.iterations.length > 0) {
       lines.push('Iterations:');
@@ -3620,7 +3975,8 @@ function renderHtml() {
       autoRerender: document.getElementById('autoRerender').value === 'true',
       rerenderStrict: document.getElementById('autoRerenderStrict').value === 'true',
       autoPromoteIfWinner: document.getElementById('autoPromoteIfWinner').value === 'true',
-      autoPromoteMinConfidence: readAutoPromoteMinConfidenceInput()
+      autoPromoteMinConfidence: readAutoPromoteMinConfidenceInput(),
+      autoPromoteSegment: readPromotionSegmentInput()
     };
     setStatus('Running auto improve...', 'muted');
     const res = await fetch('/api/jobs/' + currentId + '/auto-improve', {
@@ -3787,6 +4143,19 @@ function renderHtml() {
 
   document.getElementById('loadPromotionPolicy').addEventListener('click', async () => {
     await fetchPromotionPolicy();
+  });
+
+  document.getElementById('previewPolicyCalibration').addEventListener('click', async () => {
+    await calibratePromotionPolicy(false);
+  });
+
+  document.getElementById('applyPolicyCalibration').addEventListener('click', async () => {
+    await calibratePromotionPolicy(true);
+  });
+
+  promotionSegmentField.addEventListener('change', () => {
+    syncPolicyInputFromSegment();
+    renderPromotionPolicy(currentPromotionPolicy, 'Policy source: segment switched');
   });
 
   document.getElementById('recommendFixes').addEventListener('click', async () => {

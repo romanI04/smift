@@ -46,7 +46,8 @@ Paste a URL, generate a structured script with quality checks, produce narration
   - automation audit API: `GET /api/projects/:rootOutputName/audit?limit=20`
   - promotion policy APIs:
     - `GET /api/projects/:rootOutputName/promotion-policy`
-    - `POST /api/projects/:rootOutputName/promotion-policy` with body `{ "minConfidence": 0.75 }`
+    - `POST /api/projects/:rootOutputName/promotion-policy` with body `{ "segment": "core-icp|broad", "minConfidence": 0.75 }`
+    - `POST /api/projects/:rootOutputName/promotion-policy/calibrate` with body `{ "segment": "core-icp|broad", "apply": true|false }`
   - version metadata API: `POST /api/projects/:rootOutputName/version-meta` (actions: `set-label`, `set-archived`, `set-pinned`, `set-outcome`)
   - promote winner API: `POST /api/projects/:rootOutputName/promote` (pins recommended winner and marks publish candidate)
   - compare API: `GET /api/jobs/:id/compare?other=<jobId>`

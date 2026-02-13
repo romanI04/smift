@@ -2,6 +2,20 @@
 
 ## 2026-02-13
 
+### M35 - Segment-Calibrated Promotion Policy
+
+- Added segment-aware promotion policy thresholds (`core-icp` and `broad`) with backward-compatible global fallback.
+- Added policy calibration API:
+  - `POST /api/projects/:rootOutputName/promotion-policy/calibrate`
+  - computes recommended threshold from accepted/rejected outcomes for selected segment.
+  - supports preview mode (`apply=false`) and apply mode (`apply=true`).
+- Added policy preview data to `GET /api/projects/:rootOutputName/promotion-policy`.
+- Auto-promote now resolves threshold by segment and includes segment/threshold/confidence in audit outcomes.
+- Added UI controls for:
+  - selecting policy segment,
+  - previewing calibration,
+  - applying calibration.
+
 ### M34 - Configurable Auto-Promote Confidence Policy
 
 - Added project-level promotion policy persistence (`minConfidence`) in version metadata.

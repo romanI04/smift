@@ -71,6 +71,7 @@
 - Auto-promote does not bypass ranking/pin logic; it only executes when the rerendered version is the current recommendation winner.
 - Startup/watchdog pass now evaluates any pending auto-promote rerenders not finalized in prior runs and writes audit entries.
 - Product mode should stay URL-first with no credential prompts in runner UI by default. Use `SMIFT_REQUIRE_AUTH=true` only when explicitly validating gated billing/auth behavior.
+- Default surface should remain revenue-focused: URL input, render with voice, playback/download, and at most one quality uplift action. Keep operator tooling off the main customer path.
 
 ## Domain Pack System
 

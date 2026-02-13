@@ -2,6 +2,23 @@
 
 ## 2026-02-13
 
+### M40 - Revenue-Focused Product UI (URL -> Voiced Video)
+
+- Replaced the overloaded operator runner interface with a focused customer path:
+  - one primary action: generate video from URL
+  - default render mode on (no script-only as primary flow)
+  - voice selection in the main path (`openai`, `chatterbox`, `elevenlabs`, `none`)
+  - minimal high-signal controls only (quality + pack)
+- Added clean marketing-oriented UI with simplified status, logs, and result playback:
+  - strong hero positioning (avatar-less, artifact-first)
+  - direct MP4 download action
+  - single optional “Auto-Polish + Rerender” action for quality uplift
+- Preserved backend engine/reliability features but removed them from default customer surface.
+- Validation:
+  - `npx tsc --noEmit` pass
+  - `npm run check:vision` pass
+  - local smoke: unauthenticated `POST /api/jobs` works in product mode and job polling returns `200`.
+
 ### M39 - Product Mode Default (No Credential Input)
 
 - Changed runner default to product mode:

@@ -3142,1580 +3142,622 @@ function loadPersistedJobs() {
 
 function renderHtml() {
   const packOptions = ['auto', ...DOMAIN_PACK_IDS]
-    .map((id) => `<option value="${id}">${id}</option>`)
+    .map((id) => `<option value="${id}">${id === 'auto' ? 'auto (recommended)' : id}</option>`)
     .join('');
-  const authPanelCss = REQUIRE_AUTH ? '' : '#authBox { display:none; }';
 
   return `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>smift runner</title>
+  <title>smift - URL to premium product video</title>
   <style>
-    :root { --bg:#f6f6f4; --panel:#ffffff; --ink:#111111; --muted:#666; --accent:#0b6dfc; --ok:#138a36; --bad:#b42318; --warn:#b54708; }
-    body { margin:0; font-family: ui-sans-serif, -apple-system, Segoe UI, sans-serif; background: radial-gradient(circle at 10% 10%, #e8efe9 0, #f6f6f4 38%); color: var(--ink); }
-    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
-    .card { background:var(--panel); border:1px solid #e8e8e8; border-radius:14px; padding:16px; box-shadow:0 8px 26px rgba(0,0,0,0.05); }
-    h1 { margin: 0 0 10px; font-size: 26px; }
-    h2 { margin: 16px 0 8px; font-size: 18px; }
-    h3 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.04em; color: #333; }
-    .row { display:flex; gap:10px; flex-wrap: wrap; margin-bottom: 10px; }
-    input, select, textarea { padding:10px 12px; border:1px solid #ddd; border-radius:8px; font-size:13px; background: #fff; }
-    input[type=text] { flex:1; min-width:220px; }
-    textarea { width: 100%; min-height: 74px; font-family: ui-sans-serif, -apple-system, Segoe UI, sans-serif; }
-    button { border:none; background:var(--accent); color:#fff; border-radius:8px; padding:10px 14px; font-weight:600; cursor:pointer; }
-    button.secondary { background: #1f2937; }
-    button.warn { background: #b54708; }
-    button:disabled { opacity: 0.65; cursor: default; }
-    pre { background:#fafafa; border:1px solid #eee; border-radius:8px; padding:12px; overflow:auto; font-size:12px; }
-    .muted { color:var(--muted); }
-    .ok { color:var(--ok); font-weight:600; }
-    .bad { color:var(--bad); font-weight:600; }
-    .warnText { color: var(--warn); font-weight: 600; }
-    .split { display:grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-top: 12px; align-items: start; }
-    .editor-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 10px; }
-    .feature-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
-    .feature-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; background: #fcfcfc; }
-    .field { display:flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
-    .field label { font-size: 12px; color: #555; }
-    .hint { font-size: 12px; color: var(--muted); }
-    .quality-box { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; background: #fcfcfc; }
-    .versions-list { border: 1px solid #e5e7eb; border-radius: 10px; padding: 8px; background: #fcfcfc; max-height: 210px; overflow: auto; font-size: 12px; }
-    .version-item { padding: 6px 8px; border-bottom: 1px solid #eee; display:flex; justify-content: space-between; gap: 8px; align-items: center; }
-    .version-item:last-child { border-bottom: none; }
-    .video-grid { display:grid; grid-template-columns: 1fr; gap: 8px; }
-    .video-card { border:1px solid #e5e7eb; border-radius:10px; padding:8px; background:#fcfcfc; }
-    .video-card video { width:100%; border-radius:8px; background:#000; min-height: 140px; }
-    .stack { display:flex; flex-direction: column; gap: 10px; }
-    ${authPanelCss}
-    @media (max-width: 900px) {
-      .split { grid-template-columns: 1fr; }
-      .editor-grid { grid-template-columns: 1fr; }
-      .feature-grid { grid-template-columns: 1fr; }
+    :root {
+      --bg: #f3efe4;
+      --surface: #fff9ee;
+      --panel: #ffffff;
+      --ink: #11151b;
+      --muted: #5f6773;
+      --line: #e6dcc8;
+      --ok: #13795b;
+      --warn: #b85b00;
+      --bad: #c22f2f;
+      --accent: #0f7c66;
+      --accent-strong: #0a614f;
+      --accent-soft: #d9efe8;
+      --sun: #f3b544;
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(1100px 680px at -5% -15%, #f8d596 0%, transparent 62%),
+        radial-gradient(920px 620px at 105% 5%, #b9e8db 0%, transparent 58%),
+        linear-gradient(180deg, #f3efe4 0%, #ece6d9 100%);
+      font-family: "Sora", "Manrope", "Avenir Next", sans-serif;
+      min-height: 100vh;
+    }
+
+    .shell {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 26px 16px 40px;
+      animation: rise 420ms ease-out;
+    }
+
+    .hero {
+      margin-bottom: 16px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(15, 124, 102, 0.12);
+      border: 1px solid rgba(15, 124, 102, 0.25);
+      color: var(--accent-strong);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    h1 {
+      margin: 12px 0 8px;
+      font-size: clamp(30px, 6vw, 52px);
+      line-height: 1.02;
+      letter-spacing: -0.03em;
+      max-width: 840px;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 730px;
+      font-size: 16px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: 0 14px 36px rgba(18, 23, 30, 0.08);
+      margin-top: 14px;
+      animation: rise 540ms ease-out;
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      letter-spacing: -0.01em;
+    }
+
+    .run-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    input, select {
+      width: 100%;
+      border: 1px solid #d8dbe2;
+      border-radius: 12px;
+      padding: 12px 13px;
+      font: inherit;
+      color: var(--ink);
+      background: #fff;
+    }
+
+    label {
+      font-size: 12px;
+      color: var(--muted);
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+
+    .btn {
+      border: none;
+      border-radius: 12px;
+      padding: 12px 16px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: transform 120ms ease, opacity 120ms ease, background 120ms ease;
+      text-decoration: none;
+    }
+
+    .btn:active { transform: translateY(1px); }
+    .btn[disabled] { opacity: 0.55; cursor: default; }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), #0d9275);
+      color: #fff;
+      min-width: 190px;
+    }
+
+    .btn-secondary {
+      background: #1f2933;
+      color: #fff;
+    }
+
+    .btn-ghost {
+      background: #eff3f7;
+      color: #1f2933;
+    }
+
+    .examples {
+      margin-top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip {
+      border: 1px solid #d2d8e2;
+      background: #f8fbff;
+      color: #2b3340;
+      border-radius: 999px;
+      font-size: 12px;
+      padding: 7px 11px;
+      cursor: pointer;
+    }
+
+    .status-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+
+    .status-left {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+    }
+
+    .dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 99px;
+      background: #aab4c2;
+      box-shadow: 0 0 0 4px rgba(170, 180, 194, 0.2);
+    }
+
+    .dot.ok { background: var(--ok); box-shadow: 0 0 0 4px rgba(19, 121, 91, 0.18); }
+    .dot.warn { background: var(--warn); box-shadow: 0 0 0 4px rgba(184, 91, 0, 0.18); }
+    .dot.bad { background: var(--bad); box-shadow: 0 0 0 4px rgba(194, 47, 47, 0.18); }
+
+    .muted { color: var(--muted); }
+
+    .meta {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .log {
+      margin: 0;
+      background: #0f1720;
+      color: #e5ebf2;
+      border-radius: 12px;
+      border: 1px solid #263243;
+      padding: 12px;
+      font-size: 12px;
+      min-height: 110px;
+      max-height: 250px;
+      overflow: auto;
+      white-space: pre-wrap;
+      line-height: 1.45;
+      font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+    }
+
+    .result {
+      display: grid;
+      gap: 12px;
+    }
+
+    video {
+      width: 100%;
+      border-radius: 14px;
+      background: #000;
+      min-height: 230px;
+      border: 1px solid #222a35;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .hidden { display: none !important; }
+
+    .stagger { animation: rise 520ms ease-out; }
+
+    @media (max-width: 820px) {
+      .run-row { grid-template-columns: 1fr; }
+      .controls { grid-template-columns: 1fr; }
+      .btn-primary { width: 100%; }
+      .actions .btn { width: 100%; }
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
     }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>smift self-serve runner</h1>
-      <p class="muted">URL -> video with voice (plus optional quality/edit controls).</p>
-      <div class="quality-box" id="authBox">
-        <strong>Auth + Billing</strong>
-        <div class="row" style="margin-top:8px">
-          <input id="authEmail" type="text" placeholder="you@company.com" />
-          <input id="authPassword" type="text" placeholder="password (min 8 chars)" />
-          <select id="authPlan"><option value="starter">starter</option><option value="growth">growth</option></select>
-          <button id="signup" class="secondary">Sign Up</button>
-          <button id="login" class="secondary">Log In</button>
-          <button id="logout" class="secondary">Log Out</button>
-        </div>
-        <div class="row">
-          <button id="refreshBilling" class="secondary">Refresh Billing</button>
-          <button id="setPlan" class="secondary">Set Plan</button>
-          <input id="topupCredits" type="text" placeholder="topup credits (e.g. 10)" style="max-width:180px" />
-          <button id="runTopup" class="secondary">Add Credits</button>
-        </div>
-        <div id="billingBox" class="hint">Not authenticated.</div>
+  <main class="shell">
+    <section class="hero">
+      <span class="tag">smift engine</span>
+      <h1>Paste a product URL. Get a premium narrated video.</h1>
+      <p>
+        No avatars. No manual storyboard grind. We generate artifact-first videos designed to feel like high-end startup product launches.
+      </p>
+    </section>
+
+    <section class="panel stagger" aria-label="run">
+      <h2>Generate</h2>
+      <div class="run-row">
+        <input id="url" type="text" placeholder="https://your-product.com" />
+        <button id="runBtn" class="btn btn-primary">Generate Video</button>
       </div>
-      <div class="row">
-        <input id="url" type="text" placeholder="https://linear.app" />
-        <select id="quality"><option value="draft">draft</option><option value="yc">yc</option></select>
-        <select id="pack">${packOptions}</select>
-        <select id="strict"><option value="false">standard</option><option value="true">strict</option></select>
-        <select id="skipRender"><option value="true">script-only</option><option value="false">render-video</option></select>
-        <button id="submit">Run</button>
-      </div>
-      <div class="row">
-        <select id="section">
-          <option value="hook">hook</option>
-          <option value="feature1">feature1</option>
-          <option value="feature2">feature2</option>
-          <option value="feature3">feature3</option>
-          <option value="cta">cta</option>
-        </select>
-        <button id="regen" class="secondary">Regenerate Section</button>
-        <button id="loadScript" class="secondary">Load Script</button>
-        <button id="saveScript" class="secondary">Save Draft</button>
-        <button id="checkScript" class="secondary">Quality Check</button>
-        <button id="rerender">Rerender (Guarded)</button>
-        <button id="autofixRerender" class="warn">Auto-fix + Rerender</button>
-      </div>
-      <div class="split">
-        <div class="stack">
-          <h2>Script Editor</h2>
-          <div class="hint">Structured editor with client-side validation. Save before rerender.</div>
-          <div class="editor-grid">
-            <div class="field"><label>Brand Name</label><input id="brandName" type="text" /></div>
-            <div class="field"><label>Brand URL</label><input id="brandUrl" type="text" /></div>
-            <div class="field"><label>CTA URL</label><input id="ctaUrl" type="text" /></div>
-          </div>
-          <div class="editor-grid">
-            <div class="field"><label>Tagline</label><input id="tagline" type="text" /></div>
-            <div class="field"><label>Brand Color</label><input id="brandColor" type="text" /></div>
-            <div class="field"><label>Accent Color</label><input id="accentColor" type="text" /></div>
-          </div>
-          <div class="editor-grid">
-            <div class="field"><label>Hook Line 1</label><input id="hookLine1" type="text" /></div>
-            <div class="field"><label>Hook Line 2</label><input id="hookLine2" type="text" /></div>
-            <div class="field"><label>Hook Keyword</label><input id="hookKeyword" type="text" /></div>
-          </div>
-          <div class="field">
-            <label>Integrations (comma or new line separated)</label>
-            <textarea id="integrations"></textarea>
-          </div>
-          <div class="field">
-            <label>Narration Segments (one per line)</label>
-            <textarea id="narrationSegments" style="min-height: 130px;"></textarea>
-          </div>
-          <div class="feature-grid">
-            <div class="feature-card">
-              <h3>Feature 1</h3>
-              <div class="field"><label>Icon</label><input id="f1Icon" type="text" /></div>
-              <div class="field"><label>App Name</label><input id="f1Name" type="text" /></div>
-              <div class="field"><label>Caption</label><input id="f1Caption" type="text" /></div>
-              <div class="field"><label>Demo Lines (one per line)</label><textarea id="f1Demo"></textarea></div>
-            </div>
-            <div class="feature-card">
-              <h3>Feature 2</h3>
-              <div class="field"><label>Icon</label><input id="f2Icon" type="text" /></div>
-              <div class="field"><label>App Name</label><input id="f2Name" type="text" /></div>
-              <div class="field"><label>Caption</label><input id="f2Caption" type="text" /></div>
-              <div class="field"><label>Demo Lines (one per line)</label><textarea id="f2Demo"></textarea></div>
-            </div>
-            <div class="feature-card">
-              <h3>Feature 3</h3>
-              <div class="field"><label>Icon</label><input id="f3Icon" type="text" /></div>
-              <div class="field"><label>App Name</label><input id="f3Name" type="text" /></div>
-              <div class="field"><label>Caption</label><input id="f3Caption" type="text" /></div>
-              <div class="field"><label>Demo Lines (one per line)</label><textarea id="f3Demo"></textarea></div>
-            </div>
-          </div>
+      <div class="controls">
+        <div>
+          <label for="quality">Quality</label>
+          <select id="quality">
+            <option value="yc">premium (yc)</option>
+            <option value="draft">fast draft</option>
+          </select>
         </div>
-        <div class="stack">
-          <h2>Quality Guard</h2>
-          <div id="qualityBox" class="quality-box muted">No quality check yet.</div>
-          <div class="hint">Rerender is guarded: script must pass quality check in current strictness mode.</div>
-          <div class="field">
-            <label>Current Job ID</label>
-            <input id="currentJobId" type="text" readonly />
-          </div>
-          <div class="field">
-            <label>Domain Pack (from script)</label>
-            <input id="domainPackId" type="text" readonly />
-          </div>
-          <div class="field">
-            <label>Project Root</label>
-            <input id="rootOutputName" type="text" readonly />
-          </div>
-          <div class="row">
-            <button id="refreshVersions" class="secondary">Refresh Versions</button>
-            <button id="recommendBest" class="secondary">Recommend Best</button>
-            <button id="promoteWinner">Promote Winner</button>
-          </div>
-          <div class="row">
-            <button id="recommendFixes" class="secondary">Recommend Next Fixes</button>
-            <button id="applyTopFix" class="secondary">Apply Top Fix</button>
-          </div>
-          <div class="row">
-            <input id="autoMaxSteps" type="number" min="1" max="8" value="3" style="width:90px" title="Max auto steps" />
-            <input id="autoTargetScore" type="number" min="70" max="100" value="90" style="width:110px" title="Target score" />
-            <input id="autoMaxWarnings" type="number" min="0" max="12" value="1" style="width:120px" title="Max warnings" />
-            <input id="autoPromoteMinConfidence" type="number" min="0" max="1" step="0.05" value="0.75" style="width:150px" title="Auto promote min confidence" />
-            <select id="autoAutofix">
-              <option value="true">autofix on</option>
-              <option value="false">autofix off</option>
-            </select>
-            <select id="autoRerender">
-              <option value="false">no auto rerender</option>
-              <option value="true">auto rerender on target</option>
-            </select>
-            <select id="autoRerenderStrict">
-              <option value="true">rerender strict</option>
-              <option value="false">rerender standard</option>
-            </select>
-            <select id="autoPromoteIfWinner">
-              <option value="true">auto promote if winner</option>
-              <option value="false">no auto promote</option>
-            </select>
-            <button id="runAutoImprove" class="secondary">Run Auto Improve</button>
-          </div>
-          <div class="row">
-            <select id="promotionSegment">
-              <option value="core-icp">policy segment: core-icp</option>
-              <option value="broad">policy segment: broad</option>
-            </select>
-            <button id="savePromotionPolicy" class="secondary">Save Promote Policy</button>
-            <button id="loadPromotionPolicy" class="secondary">Load Promote Policy</button>
-            <button id="previewPolicyCalibration" class="secondary">Preview Calibration</button>
-            <button id="applyPolicyCalibration" class="secondary">Apply Calibration</button>
-          </div>
-          <div id="promotionPolicyBox" class="quality-box muted">No promotion policy loaded.</div>
-          <div id="fixPlanBox" class="quality-box muted">No section improvement plan yet.</div>
-          <div id="autoImproveBox" class="quality-box muted">No auto-improve run yet.</div>
-          <div class="row">
-            <button id="refreshAudit" class="secondary">Refresh Audit</button>
-          </div>
-          <div id="auditBox" class="quality-box muted">No automation audit yet.</div>
-          <div id="versionsList" class="versions-list muted">No versions loaded yet.</div>
-          <div id="recommendationBox" class="quality-box muted">No recommendation yet.</div>
-          <div class="field">
-            <label>Manage Version (Job ID)</label>
-            <select id="metaTarget"></select>
-          </div>
-          <div class="field">
-            <label>Version Label</label>
-            <input id="metaLabel" type="text" placeholder="e.g. publish-candidate" />
-          </div>
-          <div class="field">
-            <label>Outcome</label>
-            <select id="metaOutcome">
-              <option value="">unrated</option>
-              <option value="accepted">accepted</option>
-              <option value="rejected">rejected</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Outcome Note</label>
-            <input id="metaOutcomeNote" type="text" placeholder="optional context" />
-          </div>
-          <div class="row">
-            <button id="saveLabel" class="secondary">Save Label</button>
-            <button id="saveOutcome" class="secondary">Save Outcome</button>
-            <button id="toggleArchive" class="secondary">Toggle Archive</button>
-            <button id="togglePin" class="secondary">Toggle Pin</button>
-          </div>
-          <div class="field">
-            <label>Compare Left Job ID</label>
-            <select id="compareLeft"></select>
-          </div>
-          <div class="field">
-            <label>Compare Right Job ID</label>
-            <select id="compareRight"></select>
-          </div>
-          <button id="runCompare" class="secondary">Run Compare</button>
-          <div id="compareBox" class="quality-box muted">No compare run yet.</div>
-          <div class="video-grid">
-            <div class="video-card">
-              <div class="hint">Left version preview</div>
-              <video id="videoLeft" controls></video>
-            </div>
-            <div class="video-card">
-              <div class="hint">Right version preview</div>
-              <video id="videoRight" controls></video>
-            </div>
-          </div>
+        <div>
+          <label for="voice">Voice</label>
+          <select id="voice">
+            <option value="openai">openai narration</option>
+            <option value="chatterbox">chatterbox narration</option>
+            <option value="elevenlabs">elevenlabs narration</option>
+            <option value="none">no voice</option>
+          </select>
+        </div>
+        <div>
+          <label for="pack">Domain pack</label>
+          <select id="pack">${packOptions}</select>
         </div>
       </div>
-      <div id="status" class="muted">Idle.</div>
-      <pre id="out">No job yet.</pre>
-    </div>
-  </div>
-<script>
-  const out = document.getElementById('out');
-  const status = document.getElementById('status');
-  const qualityBox = document.getElementById('qualityBox');
-  const currentJobIdField = document.getElementById('currentJobId');
-  const domainPackField = document.getElementById('domainPackId');
-  const rootOutputField = document.getElementById('rootOutputName');
-  const versionsList = document.getElementById('versionsList');
-  const recommendationBox = document.getElementById('recommendationBox');
-  const promotionPolicyBox = document.getElementById('promotionPolicyBox');
-  const promotionSegmentField = document.getElementById('promotionSegment');
-  const billingBox = document.getElementById('billingBox');
-  const fixPlanBox = document.getElementById('fixPlanBox');
-  const autoImproveBox = document.getElementById('autoImproveBox');
-  const auditBox = document.getElementById('auditBox');
-  const metaTarget = document.getElementById('metaTarget');
-  const metaLabel = document.getElementById('metaLabel');
-  const metaOutcome = document.getElementById('metaOutcome');
-  const metaOutcomeNote = document.getElementById('metaOutcomeNote');
-  const compareLeft = document.getElementById('compareLeft');
-  const compareRight = document.getElementById('compareRight');
-  const compareBox = document.getElementById('compareBox');
-  const videoLeft = document.getElementById('videoLeft');
-  const videoRight = document.getElementById('videoRight');
-  let timer = null;
-  let currentId = null;
-  let currentScript = null;
-  let currentRootOutputName = '';
-  let currentVersions = [];
-  let currentRecommendation = null;
-  let currentFixPlan = null;
-  let currentPromotionPolicy = null;
-  const authEnabled = ${REQUIRE_AUTH ? 'true' : 'false'};
-  let authToken = localStorage.getItem('smiftAuthToken') || '';
-  let authUser = null;
+      <div class="examples">
+        <button class="chip" data-url="https://linear.app">Try: Linear</button>
+        <button class="chip" data-url="https://intercom.com">Try: Intercom</button>
+        <button class="chip" data-url="https://shopify.com">Try: Shopify</button>
+        <button class="chip" data-url="https://vercel.com">Try: Vercel</button>
+      </div>
+    </section>
 
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = function(input, init) {
-    const requestInit = Object.assign({}, init || {});
-    const headers = Object.assign({}, requestInit.headers || {});
-    const url = typeof input === 'string' ? input : String(input && input.url ? input.url : '');
-    if (authToken && url.startsWith('/api/')) {
-      headers['Authorization'] = 'Bearer ' + authToken;
+    <section class="panel stagger" aria-label="status">
+      <div class="status-wrap">
+        <div class="status-left">
+          <span id="statusDot" class="dot"></span>
+          <span id="statusText">Idle</span>
+        </div>
+        <div id="jobMeta" class="meta">No active run.</div>
+      </div>
+      <pre id="logBox" class="log">Waiting for first run...</pre>
+    </section>
+
+    <section id="resultPanel" class="panel result hidden" aria-label="result">
+      <h2>Your video</h2>
+      <video id="videoPreview" controls></video>
+      <div class="actions">
+        <a id="downloadBtn" class="btn btn-secondary" href="#" download>Download MP4</a>
+        <button id="polishBtn" class="btn btn-ghost">Auto-Polish + Rerender</button>
+        <button id="rerunBtn" class="btn btn-ghost">Generate Another</button>
+      </div>
+      <div id="resultInfo" class="muted">No render yet.</div>
+    </section>
+  </main>
+
+  <script>
+    const byId = (id) => document.getElementById(id);
+
+    const urlInput = byId('url');
+    const runBtn = byId('runBtn');
+    const qualitySelect = byId('quality');
+    const voiceSelect = byId('voice');
+    const packSelect = byId('pack');
+    const statusDot = byId('statusDot');
+    const statusText = byId('statusText');
+    const jobMeta = byId('jobMeta');
+    const logBox = byId('logBox');
+    const resultPanel = byId('resultPanel');
+    const videoPreview = byId('videoPreview');
+    const downloadBtn = byId('downloadBtn');
+    const polishBtn = byId('polishBtn');
+    const rerunBtn = byId('rerunBtn');
+    const resultInfo = byId('resultInfo');
+
+    let pollTimer = null;
+    let currentJobId = null;
+    let lastPayload = null;
+
+    function setBusy(busy) {
+      runBtn.disabled = busy;
+      runBtn.textContent = busy ? 'Generating...' : 'Generate Video';
+      polishBtn.disabled = busy;
+      rerunBtn.disabled = busy;
     }
-    requestInit.headers = headers;
-    return nativeFetch(input, requestInit);
-  };
 
-  function setStatus(text, kind='') {
-    status.textContent = text;
-    status.className = kind;
-  }
-
-  function setOutput(payload) {
-    out.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
-  }
-
-  function setAuthToken(token) {
-    authToken = String(token || '').trim();
-    if (authToken) localStorage.setItem('smiftAuthToken', authToken);
-    else localStorage.removeItem('smiftAuthToken');
-  }
-
-  function renderBillingSummary(summary) {
-    if (!summary || !summary.user) {
-      billingBox.className = 'hint';
-      billingBox.textContent = 'Not authenticated.';
-      return;
+    function setStatus(text, tone) {
+      statusText.textContent = text;
+      statusDot.className = 'dot';
+      if (tone) statusDot.classList.add(tone);
     }
-    const user = summary.user;
-    authUser = user;
-    billingBox.className = 'hint';
-    billingBox.textContent = [
-      'User: ' + user.email,
-      'Plan: ' + user.plan,
-      'Credits: ' + user.credits,
-      'Recent ledger rows: ' + (Array.isArray(summary.recentLedger) ? summary.recentLedger.length : 0),
-    ].join(' | ');
-  }
 
-  async function refreshAuthAndBilling() {
-    if (!authEnabled) {
-      authUser = null;
-      renderBillingSummary(null);
-      return null;
+    function sanitizeUrl(input) {
+      const raw = String(input || '').trim();
+      if (!raw) return '';
+      if (/^https?:\/\//i.test(raw)) return raw;
+      return 'https://' + raw;
     }
-    if (!authToken) {
-      authUser = null;
-      renderBillingSummary(null);
-      return null;
-    }
-    const meRes = await fetch('/api/auth/me');
-    const meData = await meRes.json();
-    if (!meRes.ok) {
-      setAuthToken('');
-      authUser = null;
-      renderBillingSummary(null);
-      return null;
-    }
-    const billRes = await fetch('/api/billing/summary');
-    const billData = await billRes.json();
-    if (!billRes.ok) {
-      setStatus('Billing load failed', 'bad');
-      setOutput(billData);
-      return null;
-    }
-    renderBillingSummary(billData);
-    return {me: meData, billing: billData};
-  }
 
-  async function authSignup() {
-    const email = String(byId('authEmail').value || '').trim();
-    const password = String(byId('authPassword').value || '');
-    const plan = String(byId('authPlan').value || 'starter');
-    const res = await fetch('/api/auth/signup', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({email, password, plan})
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Sign up failed', 'bad');
-      setOutput(data);
-      return null;
-    }
-    setAuthToken(data.token || '');
-    await refreshAuthAndBilling();
-    setStatus('Signed in as ' + data.user.email, 'ok');
-    setOutput(data);
-    return data;
-  }
-
-  async function authLogin() {
-    const email = String(byId('authEmail').value || '').trim();
-    const password = String(byId('authPassword').value || '');
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({email, password})
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Login failed', 'bad');
-      setOutput(data);
-      return null;
-    }
-    setAuthToken(data.token || '');
-    await refreshAuthAndBilling();
-    setStatus('Logged in as ' + data.user.email, 'ok');
-    setOutput(data);
-    return data;
-  }
-
-  async function authLogout() {
-    if (!authToken) {
-      renderBillingSummary(null);
-      return null;
-    }
-    const res = await fetch('/api/auth/logout', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({})
-    });
-    const data = await res.json();
-    setAuthToken('');
-    authUser = null;
-    renderBillingSummary(null);
-    if (!res.ok) {
-      setStatus('Logout failed', 'bad');
-      setOutput(data);
-      return null;
-    }
-    setStatus('Logged out', 'ok');
-    return data;
-  }
-
-  async function addTopupCredits() {
-    const credits = Number(byId('topupCredits').value || 0);
-    const res = await fetch('/api/billing/topup', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({credits, reason: 'runner topup'})
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Topup failed', 'bad');
-      setOutput(data);
-      return null;
-    }
-    renderBillingSummary(data);
-    setStatus('Credits added', 'ok');
-    setOutput(data);
-    return data;
-  }
-
-  async function setBillingPlan() {
-    const plan = String(byId('authPlan').value || 'starter');
-    const res = await fetch('/api/billing/plan', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({plan})
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Plan update failed', 'bad');
-      setOutput(data);
-      return null;
-    }
-    renderBillingSummary(data);
-    setStatus('Plan updated to ' + plan, 'ok');
-    setOutput(data);
-    return data;
-  }
-
-  function byId(id) {
-    return document.getElementById(id);
-  }
-
-  function parseLines(text) {
-    return String(text || '').split('\\n').map((line) => line.trim()).filter(Boolean);
-  }
-
-  function parseIntegrations(text) {
-    return String(text || '')
-      .split(/[,\\n]/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-
-  function setField(id, value) {
-    byId(id).value = value == null ? '' : String(value);
-  }
-
-  function populateFeature(index, feature) {
-    const base = 'f' + index;
-    setField(base + 'Icon', feature && feature.icon ? feature.icon : '');
-    setField(base + 'Name', feature && feature.appName ? feature.appName : '');
-    setField(base + 'Caption', feature && feature.caption ? feature.caption : '');
-    setField(base + 'Demo', feature && Array.isArray(feature.demoLines) ? feature.demoLines.join('\\n') : '');
-  }
-
-  function readFeature(index) {
-    const base = 'f' + index;
-    return {
-      icon: String(byId(base + 'Icon').value || '').trim(),
-      appName: String(byId(base + 'Name').value || '').trim(),
-      caption: String(byId(base + 'Caption').value || '').trim(),
-      demoLines: parseLines(byId(base + 'Demo').value),
-    };
-  }
-
-  function populateEditor(script) {
-    currentScript = script;
-    setField('brandName', script.brandName);
-    setField('brandUrl', script.brandUrl);
-    setField('ctaUrl', script.ctaUrl);
-    setField('tagline', script.tagline);
-    setField('brandColor', script.brandColor);
-    setField('accentColor', script.accentColor);
-    setField('hookLine1', script.hookLine1);
-    setField('hookLine2', script.hookLine2);
-    setField('hookKeyword', script.hookKeyword);
-    setField('integrations', Array.isArray(script.integrations) ? script.integrations.join('\\n') : '');
-    setField('narrationSegments', Array.isArray(script.narrationSegments) ? script.narrationSegments.join('\\n') : '');
-    populateFeature(1, script.features && script.features[0] ? script.features[0] : null);
-    populateFeature(2, script.features && script.features[1] ? script.features[1] : null);
-    populateFeature(3, script.features && script.features[2] ? script.features[2] : null);
-    domainPackField.value = script.domainPackId || '';
-  }
-
-  function buildScriptFromEditor() {
-    if (!currentScript) return null;
-    const next = JSON.parse(JSON.stringify(currentScript));
-    next.brandName = String(byId('brandName').value || '').trim();
-    next.brandUrl = String(byId('brandUrl').value || '').trim();
-    next.ctaUrl = String(byId('ctaUrl').value || '').trim();
-    next.tagline = String(byId('tagline').value || '').trim();
-    next.brandColor = String(byId('brandColor').value || '').trim();
-    next.accentColor = String(byId('accentColor').value || '').trim();
-    next.hookLine1 = String(byId('hookLine1').value || '').trim();
-    next.hookLine2 = String(byId('hookLine2').value || '').trim();
-    next.hookKeyword = String(byId('hookKeyword').value || '').trim();
-    next.integrations = parseIntegrations(byId('integrations').value);
-    next.narrationSegments = parseLines(byId('narrationSegments').value);
-    next.features = [readFeature(1), readFeature(2), readFeature(3)];
-    return next;
-  }
-
-  function validateScriptDraft(script) {
-    const errors = [];
-    if (!script.brandName) errors.push('Brand Name is required.');
-    if (!script.hookLine1) errors.push('Hook Line 1 is required.');
-    if (!script.hookLine2) errors.push('Hook Line 2 is required.');
-    if (!script.hookKeyword) errors.push('Hook Keyword is required.');
-    if (!script.ctaUrl) errors.push('CTA URL is required.');
-    if (!Array.isArray(script.features) || script.features.length < 3) errors.push('Exactly 3 features are required.');
-    if (!Array.isArray(script.narrationSegments) || script.narrationSegments.length < 5) {
-      errors.push('Narration needs at least 5 segments.');
-    }
-    (script.features || []).forEach((feature, idx) => {
-      if (!feature.appName) errors.push('Feature ' + (idx + 1) + ' App Name is required.');
-      if (!feature.caption) errors.push('Feature ' + (idx + 1) + ' Caption is required.');
-      if (!Array.isArray(feature.demoLines) || feature.demoLines.length === 0) {
-        errors.push('Feature ' + (idx + 1) + ' needs at least one demo line.');
+    function setLogs(lines) {
+      if (!Array.isArray(lines) || lines.length === 0) {
+        logBox.textContent = 'No log lines yet.';
+        return;
       }
-    });
-    return errors;
-  }
-
-  function renderQuality(result) {
-    if (!result || !result.qualityReport) {
-      qualityBox.className = 'quality-box muted';
-      qualityBox.textContent = 'No quality check yet.';
-      return;
-    }
-    const report = result.qualityReport;
-    const lines = [];
-    lines.push('Score: ' + report.score + '/' + report.minScore);
-    lines.push('Passed: ' + (report.passed ? 'yes' : 'no'));
-    if (Array.isArray(result.autofixActions) && result.autofixActions.length > 0) {
-      lines.push('Autofix Actions: ' + result.autofixActions.join(' | '));
-    }
-    if (Array.isArray(report.blockers) && report.blockers.length > 0) {
-      lines.push('Blockers:');
-      report.blockers.forEach((item) => lines.push('  - ' + item));
-    }
-    if (Array.isArray(report.warnings) && report.warnings.length > 0) {
-      lines.push('Warnings:');
-      report.warnings.forEach((item) => lines.push('  - ' + item));
-    }
-    qualityBox.textContent = lines.join('\\n');
-    qualityBox.className = report.passed ? 'quality-box ok' : 'quality-box bad';
-  }
-
-  function readAutoPromoteMinConfidenceInput() {
-    const raw = Number(byId('autoPromoteMinConfidence').value);
-    if (!Number.isFinite(raw)) return 0.75;
-    return Math.max(0, Math.min(1, Math.round(raw * 100) / 100));
-  }
-
-  function readPromotionSegmentInput() {
-    const value = String(promotionSegmentField.value || '').trim();
-    return value === 'broad' ? 'broad' : 'core-icp';
-  }
-
-  function policyThresholdForSegment(policy, segment) {
-    if (!policy || !policy.segmentThresholds) return null;
-    const raw = segment === 'broad'
-      ? policy.segmentThresholds.broad
-      : policy.segmentThresholds['core-icp'];
-    const parsed = Number(raw);
-    if (!Number.isFinite(parsed)) return null;
-    return Math.max(0, Math.min(1, Math.round(parsed * 100) / 100));
-  }
-
-  function syncPolicyInputFromSegment() {
-    if (!currentPromotionPolicy) return;
-    const segment = readPromotionSegmentInput();
-    const threshold = policyThresholdForSegment(currentPromotionPolicy, segment);
-    if (threshold != null) {
-      byId('autoPromoteMinConfidence').value = String(threshold.toFixed(2));
-    }
-  }
-
-  function renderPromotionPolicy(policy, sourceText) {
-    if (!policy || typeof policy.minConfidence !== 'number') {
-      currentPromotionPolicy = null;
-      promotionPolicyBox.className = 'quality-box muted';
-      promotionPolicyBox.textContent = 'No promotion policy loaded.';
-      return;
-    }
-    currentPromotionPolicy = policy;
-    syncPolicyInputFromSegment();
-    const core = policyThresholdForSegment(policy, 'core-icp');
-    const broad = policyThresholdForSegment(policy, 'broad');
-    const selectedSegment = readPromotionSegmentInput();
-    const selectedThreshold = policyThresholdForSegment(policy, selectedSegment);
-    const lines = [
-      'Global min confidence: ' + Number(policy.minConfidence || 0).toFixed(2),
-      'core-icp min confidence: ' + (core == null ? 'n/a' : core.toFixed(2)),
-      'broad min confidence: ' + (broad == null ? 'n/a' : broad.toFixed(2)),
-      'Selected segment (' + selectedSegment + ') threshold: ' + (selectedThreshold == null ? 'n/a' : selectedThreshold.toFixed(2)),
-      sourceText || 'Policy source: project setting',
-    ];
-    if (policy.lastCalibration && policy.lastCalibration[selectedSegment]) {
-      const c = policy.lastCalibration[selectedSegment];
-      lines.push(
-        'Last calibration (' + selectedSegment + '): '
-        + 'recommended=' + Number(c.recommendedMinConfidence || 0).toFixed(2)
-        + ', accepted=' + Number(c.accepted || 0)
-        + ', rejected=' + Number(c.rejected || 0)
-        + ', total=' + Number(c.total || 0),
-      );
-    }
-    promotionPolicyBox.className = 'quality-box';
-    promotionPolicyBox.textContent = lines.join('\\n');
-  }
-
-  function setCurrentRoot(rootOutputName) {
-    currentRootOutputName = String(rootOutputName || '').trim();
-    rootOutputField.value = currentRootOutputName;
-  }
-
-  function renderVersionOptions(versions) {
-    const options = versions.map((item) => {
-      const flags = []
-      if (item.meta && item.meta.pinned) flags.push('pinned');
-      if (item.meta && item.meta.archived) flags.push('archived');
-      if (item.meta && item.meta.outcome) flags.push(item.meta.outcome);
-      if (item.meta && item.meta.promotedAt) flags.push('promoted');
-      if (item.meta && item.meta.label) flags.push(item.meta.label);
-      const suffix = flags.length > 0 ? ' [' + flags.join(', ') + ']' : '';
-      return '<option value=\"' + item.id + '\">v' + item.version + ' · ' + item.id + suffix + '</option>';
-    });
-    compareLeft.innerHTML = options.join('');
-    compareRight.innerHTML = options.join('');
-    metaTarget.innerHTML = options.join('');
-    if (versions.length >= 2) {
-      compareLeft.value = versions[0].id;
-      compareRight.value = versions[1].id;
-      metaTarget.value = versions[0].id;
-    } else if (versions.length === 1) {
-      compareLeft.value = versions[0].id;
-      compareRight.value = versions[0].id;
-      metaTarget.value = versions[0].id;
-    }
-    syncMetaForm();
-  }
-
-  function renderVersionsList(versions) {
-    currentVersions = versions;
-    if (!Array.isArray(versions) || versions.length === 0) {
-      versionsList.className = 'versions-list muted';
-      versionsList.textContent = 'No versions yet.';
-      renderVersionOptions([]);
-      return;
-    }
-    versionsList.className = 'versions-list';
-    versionsList.innerHTML = versions
-      .map((item) => {
-        const statusBadge = item.status === 'completed'
-          ? '<span class=\"ok\">completed</span>'
-          : item.status === 'failed'
-            ? '<span class=\"bad\">failed</span>'
-            : '<span class=\"muted\">' + item.status + '</span>';
-        const tags = [];
-        if (item.meta && item.meta.pinned) tags.push('pinned');
-        if (item.meta && item.meta.archived) tags.push('archived');
-        if (item.meta && item.meta.promotedAt) tags.push('promoted');
-        if (item.meta && item.meta.outcome) tags.push('outcome:' + item.meta.outcome);
-        if (item.meta && item.meta.label) tags.push('label:' + item.meta.label);
-        const tagLine = tags.length > 0 ? '<span class=\"hint\">' + tags.join(' · ') + '</span>' : '';
-        return '<div class=\"version-item\">'
-          + '<div><strong>v' + item.version + '</strong> · ' + item.id + '<br/><span class=\"muted\">' + item.outputName + '</span><br/>' + tagLine + '</div>'
-          + '<div>' + statusBadge + '</div>'
-          + '</div>';
-      })
-      .join('');
-    renderVersionOptions(versions);
-  }
-
-  async function refreshVersions() {
-    if (!currentRootOutputName) {
-      versionsList.className = 'versions-list muted';
-      versionsList.textContent = 'No project root selected yet.';
-      renderVersionOptions([]);
-      renderPromotionPolicy(null, '');
-      return;
-    }
-    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/versions');
-    const data = await res.json();
-    if (!res.ok) {
-      versionsList.className = 'versions-list bad';
-      versionsList.textContent = data.error || 'Failed to load versions';
-      return;
-    }
-    if (data.promotionPolicy) {
-      renderPromotionPolicy(data.promotionPolicy, 'Policy source: versions snapshot');
-    } else {
-      await fetchPromotionPolicy();
-    }
-    renderVersionsList(data.versions || []);
-  }
-
-  async function fetchRecommendation() {
-    if (!currentRootOutputName) {
-      currentRecommendation = null;
-      recommendationBox.className = 'quality-box muted';
-      recommendationBox.textContent = 'No project root selected yet.';
-      return null;
-    }
-    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/recommendation');
-    const data = await res.json();
-    if (!res.ok) {
-      currentRecommendation = null;
-      recommendationBox.className = 'quality-box bad';
-      recommendationBox.textContent = data.error || 'Recommendation failed';
-      return null;
-    }
-    const rec = data.recommendation || {};
-    currentRecommendation = rec;
-    if (!rec.recommended) {
-      recommendationBox.className = 'quality-box muted';
-      recommendationBox.textContent = rec.reason || 'No recommendation available.';
-      return data;
-    }
-    const lines = [
-      'Recommended: v' + rec.recommended.version + ' · ' + rec.recommended.id,
-      'Output: ' + rec.recommended.outputName,
-      'Composite: ' + rec.recommended.composite,
-      'Confidence: ' + (rec.recommended.confidence == null ? 'n/a' : rec.recommended.confidence),
-      'Learning outcomes: ' + (((rec.learning && rec.learning.totalOutcomes) || 0)),
-      'Why: ' + (rec.reason || ''),
-    ];
-    if (Array.isArray(rec.recommended.rationale) && rec.recommended.rationale.length > 0) {
-      lines.push('Rationale:');
-      rec.recommended.rationale.forEach((item) => lines.push('  - ' + item));
-    }
-    recommendationBox.className = 'quality-box ok';
-    recommendationBox.textContent = lines.join('\\n');
-    const best = versionById(rec.recommended.id);
-    if (best) {
-      compareRight.value = best.id;
-      const leftCandidate = currentVersions.find((item) => item.id !== best.id) || best;
-      compareLeft.value = leftCandidate.id;
-      if (best.videoUrl) videoRight.src = best.videoUrl;
-      if (leftCandidate.videoUrl) videoLeft.src = leftCandidate.videoUrl;
-    }
-    setOutput(data);
-    return data;
-  }
-
-  async function fetchPromotionPolicy() {
-    if (!currentRootOutputName) {
-      renderPromotionPolicy(null, '');
-      return null;
-    }
-    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/promotion-policy');
-    const data = await res.json();
-    if (!res.ok) {
-      promotionPolicyBox.className = 'quality-box bad';
-      promotionPolicyBox.textContent = data.error || 'Promotion policy fetch failed';
-      return null;
-    }
-    const previewText = (data.calibrationPreview && Array.isArray(data.calibrationPreview.segments))
-      ? ('Policy source: project setting · preview segments=' + data.calibrationPreview.segments.length)
-      : 'Policy source: project setting';
-    renderPromotionPolicy(data.policy, previewText);
-    return data;
-  }
-
-  async function savePromotionPolicy() {
-    if (!currentRootOutputName) {
-      setStatus('No project root selected', 'bad');
-      return null;
-    }
-    const minConfidence = readAutoPromoteMinConfidenceInput();
-    const segment = readPromotionSegmentInput();
-    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/promotion-policy', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({minConfidence, segment})
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Save promotion policy failed', 'bad');
-      promotionPolicyBox.className = 'quality-box bad';
-      promotionPolicyBox.textContent = data.error || 'Save promotion policy failed';
-      setOutput(data);
-      return null;
-    }
-    renderPromotionPolicy(data.policy, 'Policy source: saved to project');
-    setStatus('Promotion policy saved', 'ok');
-    setOutput(data);
-    await fetchAudit();
-    return data;
-  }
-
-  async function calibratePromotionPolicy(apply) {
-    if (!currentRootOutputName) {
-      setStatus('No project root selected', 'bad');
-      return null;
-    }
-    const segment = readPromotionSegmentInput();
-    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/promotion-policy/calibrate', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({segment, apply: Boolean(apply)})
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Policy calibration failed', 'bad');
-      promotionPolicyBox.className = 'quality-box bad';
-      promotionPolicyBox.textContent = data.error || 'Policy calibration failed';
-      setOutput(data);
-      return null;
-    }
-    if (data.policy) {
-      renderPromotionPolicy(
-        data.policy,
-        (apply ? 'Calibration applied' : 'Calibration preview')
-          + ' · segment=' + segment
-          + ' · recommended=' + Number(data.recommendedMinConfidence || 0).toFixed(2),
-      );
-    }
-    const stats = data.stats || {};
-    setStatus(
-      (apply ? 'Policy calibrated' : 'Calibration preview ready')
-        + ' (' + segment + ', accepted=' + Number(stats.accepted || 0)
-        + ', rejected=' + Number(stats.rejected || 0) + ')',
-      'ok',
-    );
-    setOutput(data);
-    await fetchAudit();
-    return data;
-  }
-
-  async function fetchAudit() {
-    if (!currentRootOutputName) {
-      auditBox.className = 'quality-box muted';
-      auditBox.textContent = 'No project root selected yet.';
-      return null;
-    }
-    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/audit?limit=20');
-    const data = await res.json();
-    if (!res.ok) {
-      auditBox.className = 'quality-box bad';
-      auditBox.textContent = data.error || 'Audit fetch failed';
-      return null;
-    }
-    const entries = Array.isArray(data.entries) ? data.entries : [];
-    if (entries.length === 0) {
-      auditBox.className = 'quality-box muted';
-      auditBox.textContent = 'No automation audit yet.';
-      return data;
-    }
-    const lines = entries.slice(0, 8).map((item, idx) => {
-      const when = String(item.at || '').replace('T', ' ').replace('Z', 'Z');
-      const source = item.sourceJobId ? (' source=' + item.sourceJobId) : '';
-      return (idx + 1) + '. [' + when + '] ' + item.type + ' job=' + item.jobId + source + ' :: ' + item.reason;
-    });
-    auditBox.className = 'quality-box';
-    auditBox.textContent = lines.join('\\n');
-    return data;
-  }
-
-  async function fetchImprovementPlan() {
-    if (!currentId) {
-      currentFixPlan = null;
-      fixPlanBox.className = 'quality-box muted';
-      fixPlanBox.textContent = 'No active job selected yet.';
-      return null;
-    }
-    const res = await fetch('/api/jobs/' + currentId + '/improvement-plan?limit=3');
-    const data = await res.json();
-    if (!res.ok) {
-      currentFixPlan = null;
-      fixPlanBox.className = 'quality-box bad';
-      fixPlanBox.textContent = data.error || 'Improvement plan failed';
-      return null;
-    }
-    currentFixPlan = data;
-    const recs = Array.isArray(data.recommendations) ? data.recommendations : [];
-    if (recs.length === 0) {
-      fixPlanBox.className = 'quality-box muted';
-      fixPlanBox.textContent = 'No section recommendations available yet.';
-      setOutput(data);
-      return data;
-    }
-    const lines = recs.map((item, idx) => {
-      const reason = Array.isArray(item.reasons) && item.reasons[0] ? item.reasons[0] : 'No reason provided';
-      return [
-        (idx + 1) + '. ' + item.section + ' (priority=' + item.priority + ', impact=' + item.impact + ', confidence=' + item.confidence + ')',
-        '   ' + reason,
-      ].join('\\n');
-    });
-    fixPlanBox.className = 'quality-box';
-    fixPlanBox.textContent = lines.join('\\n');
-    setOutput(data);
-    return data;
-  }
-
-  async function updateVersionMeta(action, payload) {
-    if (!currentRootOutputName) {
-      setStatus('No project root selected', 'bad');
-      return null;
-    }
-    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/version-meta', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(Object.assign({action}, payload || {}))
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Version metadata update failed', 'bad');
-      setOutput(data);
-      return null;
-    }
-    renderVersionsList(data.versions || []);
-    setOutput(data);
-    return data;
-  }
-
-  async function promoteWinner() {
-    if (!currentRootOutputName) {
-      setStatus('No project root selected', 'bad');
-      return null;
-    }
-    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/promote', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({})
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Promote winner failed', 'bad');
-      setOutput(data);
-      return null;
-    }
-    renderVersionsList(data.versions || []);
-    if (data.promoted && data.promoted.id) {
-      metaTarget.value = data.promoted.id;
-      syncMetaForm();
-    }
-    setOutput(data);
-    return data;
-  }
-
-  function versionById(id) {
-    return currentVersions.find((item) => item.id === id) || null;
-  }
-
-  function syncMetaForm() {
-    const target = versionById(metaTarget.value);
-    metaLabel.value = target && target.meta && target.meta.label ? target.meta.label : '';
-    metaOutcome.value = target && target.meta && target.meta.outcome ? target.meta.outcome : '';
-    metaOutcomeNote.value = target && target.meta && target.meta.outcomeNote ? target.meta.outcomeNote : '';
-  }
-
-  async function runCompare() {
-    const leftId = compareLeft.value;
-    const rightId = compareRight.value;
-    if (!leftId || !rightId) {
-      setStatus('Select two versions first', 'bad');
-      return;
-    }
-    const res = await fetch('/api/jobs/' + leftId + '/compare?other=' + encodeURIComponent(rightId));
-    const data = await res.json();
-    if (!res.ok) {
-      compareBox.className = 'quality-box bad';
-      compareBox.textContent = data.error || 'Compare failed';
-      return;
-    }
-    const diff = data.diff || {};
-    const lines = [
-      'Score delta (right-left): ' + String(diff.scoreDelta),
-      'Pass transition: ' + String(diff.passTransition),
-      'Pack transition: ' + String(diff.packTransition),
-      'Hook changed: ' + String(diff.hookChanged),
-      'CTA changed: ' + String(diff.ctaChanged),
-      'Narration word delta (left-right): ' + String(diff.narrationWordDelta),
-      'Shared integrations: ' + String(diff.sharedIntegrationsCount),
-    ];
-    if (Array.isArray(diff.featureNameChanges) && diff.featureNameChanges.length > 0) {
-      lines.push('Feature name changes:');
-      diff.featureNameChanges.forEach((change) => {
-        lines.push('  - slot ' + change.slot + ': \"' + change.from + '\" -> \"' + change.to + '\"');
-      });
-    }
-    compareBox.className = 'quality-box';
-    compareBox.textContent = lines.join('\\n');
-    if (data.left && data.left.videoUrl) videoLeft.src = data.left.videoUrl;
-    else videoLeft.removeAttribute('src');
-    if (data.right && data.right.videoUrl) videoRight.src = data.right.videoUrl;
-    else videoRight.removeAttribute('src');
-    setOutput(data);
-  }
-
-  async function poll() {
-    if (!currentId) return;
-    const res = await fetch('/api/jobs/' + currentId);
-    const data = await res.json();
-    setOutput(data);
-    if (data.rootOutputName) {
-      setCurrentRoot(data.rootOutputName);
-    }
-    if (data.status === 'completed') {
-      setStatus('Completed', 'ok');
-      currentJobIdField.value = currentId;
-      await refreshVersions();
-      await fetchRecommendation();
-      await fetchImprovementPlan();
-      await fetchAudit();
-      clearInterval(timer);
-    } else if (data.status === 'failed') {
-      setStatus('Failed', 'bad');
-      await refreshVersions();
-      await fetchRecommendation();
-      await fetchImprovementPlan();
-      await fetchAudit();
-      clearInterval(timer);
-    } else {
-      setStatus('Running: ' + data.status, 'muted');
-    }
-  }
-
-  async function loadScript() {
-    if (!currentId) {
-      setStatus('No active job selected', 'bad');
-      return;
-    }
-    const res = await fetch('/api/jobs/' + currentId + '/script');
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Load script failed', 'bad');
-      setOutput(data);
-      return;
-    }
-    populateEditor(data.script);
-    setStatus('Script loaded', 'ok');
-    setOutput(data);
-    currentJobIdField.value = currentId;
-    await fetchImprovementPlan();
-    await fetchAudit();
-  }
-
-  async function saveScriptDraft() {
-    if (!currentId) {
-      setStatus('No active job selected', 'bad');
-      return {ok: false, errors: ['No active job selected.']};
-    }
-    const script = buildScriptFromEditor();
-    if (!script) {
-      setStatus('Load script first', 'bad');
-      return {ok: false, errors: ['Load script first.']};
-    }
-    const draftErrors = validateScriptDraft(script);
-    if (draftErrors.length > 0) {
-      setStatus('Fix editor errors first', 'bad');
-      qualityBox.className = 'quality-box bad';
-      qualityBox.textContent = draftErrors.map((item) => '- ' + item).join('\\n');
-      return {ok: false, errors: draftErrors};
+      logBox.textContent = lines.slice(-25).join('\n');
+      logBox.scrollTop = logBox.scrollHeight;
     }
 
-    const res = await fetch('/api/jobs/' + currentId + '/script', {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({script})
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Save script failed', 'bad');
-      setOutput(data);
-      return {ok: false, errors: [data.error || 'Save script failed']};
-    }
-    currentScript = script;
-    domainPackField.value = script.domainPackId || '';
-    setStatus('Script saved', 'ok');
-    setOutput(data);
-    await poll();
-    return {ok: true, script};
-  }
+    function renderResult(job) {
+      const quality = job && job.quality ? job.quality : null;
+      const parts = [];
+      if (job && job.outputName) parts.push('output: ' + job.outputName);
+      if (quality && typeof quality.score === 'number') parts.push('score: ' + quality.score);
+      if (quality && quality.domainPack) parts.push('pack: ' + quality.domainPack);
+      if (quality && quality.template) parts.push('template: ' + quality.template);
+      if (quality && quality.passed === false) parts.push('quality guard: warnings/blockers present');
+      resultInfo.textContent = parts.length > 0 ? parts.join(' | ') : 'Render complete.';
 
-  async function runQualityCheck(autofix) {
-    if (!currentId) {
-      setStatus('No active job selected', 'bad');
-      return null;
+      if (job && job.videoUrl) {
+        videoPreview.src = job.videoUrl;
+        downloadBtn.href = job.videoUrl;
+        downloadBtn.classList.remove('hidden');
+      } else {
+        videoPreview.removeAttribute('src');
+        downloadBtn.classList.add('hidden');
+      }
+      resultPanel.classList.remove('hidden');
     }
-    const res = await fetch('/api/jobs/' + currentId + '/validate-script', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({autofix})
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Quality check failed', 'bad');
-      setOutput(data);
-      return null;
-    }
-    renderQuality(data);
-    setOutput(data);
-    if (autofix) {
-      await loadScript();
-    }
-    await fetchImprovementPlan();
-    return data;
-  }
 
-  async function queueRerender() {
-    const payload = {
-      quality: document.getElementById('quality').value,
-      strict: document.getElementById('strict').value === 'true',
-      voice: 'none',
-      autoPromoteMinConfidence: readAutoPromoteMinConfidenceInput(),
-      autoPromoteSegment: readPromotionSegmentInput()
-    };
-    const res = await fetch('/api/jobs/' + currentId + '/rerender', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Rerender failed to queue', 'bad');
-      setOutput(data);
-      return false;
+    function updateMeta(job) {
+      const queue = typeof job.queuePosition === 'number' && job.queuePosition > 0
+        ? 'queue #' + job.queuePosition
+        : 'running';
+      const version = job.version ? ('v' + job.version) : 'v1';
+      jobMeta.textContent = 'job: ' + job.id + ' | ' + version + ' | ' + queue;
     }
-    if (data.rootOutputName) {
-      setCurrentRoot(data.rootOutputName);
-    }
-    currentId = data.id;
-    currentJobIdField.value = currentId;
-    setStatus('Rerender queued: ' + currentId + (data.version ? ' (v' + data.version + ')' : ''), 'muted');
-    setOutput(data);
-    await refreshAuthAndBilling();
-    await refreshVersions();
-    if (timer) clearInterval(timer);
-    timer = setInterval(poll, 2000);
-    poll();
-    return true;
-  }
 
-  async function regenerateSection(section) {
-    if (!currentId) {
-      setStatus('No active job selected', 'bad');
-      return false;
+    async function fetchJson(url, init) {
+      const res = await fetch(url, init);
+      const data = await res.json().catch(() => ({error: 'invalid JSON response'}));
+      return {res, data};
     }
-    const res = await fetch('/api/jobs/' + currentId + '/regenerate', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({section})
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Regenerate failed', 'bad');
-      setOutput(data);
-      return false;
-    }
-    setStatus('Section regenerated: ' + section, 'ok');
-    setOutput(data);
-    renderQuality({qualityReport: data.quality && data.quality.available ? {score: data.quality.score, minScore: 80, passed: data.quality.passed, blockers: [], warnings: []} : null});
-    await loadScript();
-    await poll();
-    await fetchImprovementPlan();
-    return true;
-  }
 
-  async function applyTopSectionFix() {
-    if (!currentId) {
-      setStatus('No active job selected', 'bad');
-      return false;
-    }
-    if (!currentFixPlan || !Array.isArray(currentFixPlan.recommendations) || currentFixPlan.recommendations.length === 0) {
-      const planned = await fetchImprovementPlan();
-      if (!planned || !Array.isArray(planned.recommendations) || planned.recommendations.length === 0) {
-        setStatus('No top fix available', 'muted');
-        return false;
+    async function pollJob() {
+      if (!currentJobId) return;
+      const {res, data} = await fetchJson('/api/jobs/' + currentJobId);
+      if (!res.ok) {
+        setStatus('Failed to load job', 'bad');
+        setLogs([data.error || 'unknown error']);
+        clearInterval(pollTimer);
+        pollTimer = null;
+        setBusy(false);
+        return;
+      }
+
+      setLogs(Array.isArray(data.logs) ? data.logs : []);
+      updateMeta(data);
+
+      if (data.status === 'queued') {
+        setStatus('Queued', 'warn');
+        return;
+      }
+      if (data.status === 'running') {
+        setStatus('Rendering...', 'warn');
+        return;
+      }
+      if (data.status === 'failed') {
+        setStatus('Run failed', 'bad');
+        setBusy(false);
+        clearInterval(pollTimer);
+        pollTimer = null;
+        resultPanel.classList.remove('hidden');
+        resultInfo.textContent = data.error || 'Rendering failed. Try another URL or voice.';
+        return;
+      }
+      if (data.status === 'completed') {
+        setStatus('Video ready', 'ok');
+        setBusy(false);
+        clearInterval(pollTimer);
+        pollTimer = null;
+        renderResult(data);
       }
     }
-    const top = currentFixPlan.recommendations[0];
-    if (!top || !top.section) {
-      setStatus('No top fix available', 'muted');
-      return false;
-    }
-    setStatus('Applying top fix: ' + top.section, 'muted');
-    return regenerateSection(top.section);
-  }
 
-  function renderAutoImproveResult(data) {
-    if (!data || !Array.isArray(data.iterations)) {
-      autoImproveBox.className = 'quality-box muted';
-      autoImproveBox.textContent = 'No auto-improve run yet.';
-      return;
-    }
-    const lines = [];
-    lines.push('Stop reason: ' + (data.stopReason || 'n/a'));
-    if (data.initialQuality) {
-      lines.push('Initial: score=' + data.initialQuality.score + ', blockers=' + data.initialQuality.blockers + ', warnings=' + data.initialQuality.warnings);
-    }
-    if (data.finalQuality) {
-      lines.push('Final: score=' + data.finalQuality.score + ', blockers=' + data.finalQuality.blockers + ', warnings=' + data.finalQuality.warnings);
-    }
-    if (data.rerender) {
-      lines.push('Rerender: ' + (data.rerender.queued ? ('queued ' + data.rerender.id + ' (v' + data.rerender.version + ')') : data.rerender.reason));
-      lines.push('Auto promote if winner: ' + String(Boolean(data.rerender.autoPromoteIfWinner)));
-      lines.push('Auto promote min confidence: ' + String(data.rerender.autoPromoteMinConfidence));
-      lines.push('Auto promote segment: ' + String(data.rerender.autoPromoteSegment || 'core-icp'));
-    }
-    if (data.iterations.length > 0) {
-      lines.push('Iterations:');
-      data.iterations.forEach((item) => {
-        lines.push('  - step ' + item.step + ' [' + item.section + '] ' + item.before.score + ' -> ' + item.after.score + ' (improved=' + item.improved + ')');
+    async function queueGeneration(payload) {
+      setBusy(true);
+      setStatus('Submitting...', 'warn');
+      setLogs(['Submitting URL...']);
+      resultPanel.classList.add('hidden');
+
+      const {res, data} = await fetchJson('/api/jobs', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
       });
-    }
-    autoImproveBox.className = 'quality-box';
-    autoImproveBox.textContent = lines.join('\\n');
-  }
 
-  async function runAutoImprove() {
-    if (!currentId) {
-      setStatus('No active job selected', 'bad');
-      return null;
+      if (!res.ok) {
+        setBusy(false);
+        setStatus('Submit failed', 'bad');
+        setLogs([data.error || 'submit failed']);
+        return;
+      }
+
+      currentJobId = data.id;
+      lastPayload = payload;
+      setStatus('Queued', 'warn');
+      jobMeta.textContent = 'job: ' + data.id + ' | v' + (data.version || 1);
+
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(() => {
+        pollJob().catch((error) => {
+          setStatus('Polling failed', 'bad');
+          setLogs([String(error && error.message ? error.message : error)]);
+          setBusy(false);
+        });
+      }, 2000);
+
+      await pollJob();
     }
-    const payload = {
-      maxSteps: Number(document.getElementById('autoMaxSteps').value),
-      targetScore: Number(document.getElementById('autoTargetScore').value),
-      maxWarnings: Number(document.getElementById('autoMaxWarnings').value),
-      autofix: document.getElementById('autoAutofix').value === 'true',
-      autoRerender: document.getElementById('autoRerender').value === 'true',
-      rerenderStrict: document.getElementById('autoRerenderStrict').value === 'true',
-      autoPromoteIfWinner: document.getElementById('autoPromoteIfWinner').value === 'true',
-      autoPromoteMinConfidence: readAutoPromoteMinConfidenceInput(),
-      autoPromoteSegment: readPromotionSegmentInput()
-    };
-    setStatus('Running auto improve...', 'muted');
-    const res = await fetch('/api/jobs/' + currentId + '/auto-improve', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      autoImproveBox.className = 'quality-box bad';
-      autoImproveBox.textContent = data.error || 'Auto improve failed';
-      setStatus('Auto improve failed', 'bad');
-      setOutput(data);
-      return null;
+
+    async function runFromInput() {
+      const url = sanitizeUrl(urlInput.value);
+      if (!url) {
+        setStatus('URL required', 'bad');
+        urlInput.focus();
+        return;
+      }
+
+      const payload = {
+        url,
+        quality: qualitySelect.value === 'draft' ? 'draft' : 'yc',
+        pack: packSelect.value || 'auto',
+        strict: qualitySelect.value !== 'draft',
+        skipRender: false,
+        voice: voiceSelect.value || 'openai',
+      };
+
+      await queueGeneration(payload);
     }
-    renderAutoImproveResult(data);
-    setOutput(data);
-    if (data.finalQuality) {
-      renderQuality({
-        qualityReport: {
-          score: data.finalQuality.score,
-          minScore: 80,
-          passed: data.finalQuality.passed,
-          blockers: [],
-          warnings: []
-        }
+
+    async function runPolishPass() {
+      if (!currentJobId) {
+        setStatus('No completed run to polish', 'bad');
+        return;
+      }
+      setBusy(true);
+      setStatus('Polishing script + rerendering...', 'warn');
+
+      const {res, data} = await fetchJson('/api/jobs/' + currentJobId + '/auto-improve', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          maxSteps: 3,
+          targetScore: 90,
+          maxWarnings: 1,
+          autofix: true,
+          autoRerender: true,
+          rerenderStrict: true,
+          autoPromoteIfWinner: false,
+        }),
       });
+
+      if (!res.ok) {
+        setBusy(false);
+        setStatus('Polish failed', 'bad');
+        setLogs([data.error || 'auto-improve request failed']);
+        return;
+      }
+
+      const rerender = data && data.rerender ? data.rerender : null;
+      if (rerender && rerender.queued && rerender.id) {
+        currentJobId = rerender.id;
+        setStatus('Polish queued rerender', 'warn');
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(() => {
+          pollJob().catch((error) => {
+            setStatus('Polling failed', 'bad');
+            setLogs([String(error && error.message ? error.message : error)]);
+            setBusy(false);
+          });
+        }, 2000);
+        await pollJob();
+        return;
+      }
+
+      setBusy(false);
+      setStatus('Polish complete (no rerender)', 'ok');
+      setLogs(Array.isArray(data.iterations)
+        ? data.iterations.map((it) => 'step ' + it.step + ' [' + it.section + '] ' + it.before.score + ' -> ' + it.after.score)
+        : ['polish complete']);
     }
-    await loadScript();
-    await fetchImprovementPlan();
-    await fetchAudit();
-    if (data.rerender && data.rerender.queued && data.rerender.id) {
-      currentId = data.rerender.id;
-      currentJobIdField.value = currentId;
-      setStatus('Auto improve queued rerender: ' + data.rerender.id, 'ok');
-      await refreshAuthAndBilling();
-      await refreshVersions();
-      if (timer) clearInterval(timer);
-      timer = setInterval(poll, 2000);
-      poll();
-      return data;
-    }
-    setStatus('Auto improve finished: ' + (data.stopReason || 'done'), 'ok');
-    return data;
-  }
 
-  document.getElementById('signup').addEventListener('click', async () => {
-    await authSignup();
-  });
-
-  document.getElementById('login').addEventListener('click', async () => {
-    await authLogin();
-  });
-
-  document.getElementById('logout').addEventListener('click', async () => {
-    await authLogout();
-  });
-
-  document.getElementById('refreshBilling').addEventListener('click', async () => {
-    const result = await refreshAuthAndBilling();
-    if (!result) {
-      setStatus('Not authenticated', 'muted');
-      return;
-    }
-    setStatus('Billing refreshed', 'ok');
-    setOutput(result);
-  });
-
-  document.getElementById('setPlan').addEventListener('click', async () => {
-    await setBillingPlan();
-  });
-
-  document.getElementById('runTopup').addEventListener('click', async () => {
-    await addTopupCredits();
-  });
-
-  document.getElementById('submit').addEventListener('click', async () => {
-    const payload = {
-      url: document.getElementById('url').value,
-      quality: document.getElementById('quality').value,
-      pack: document.getElementById('pack').value,
-      strict: document.getElementById('strict').value === 'true',
-      skipRender: document.getElementById('skipRender').value === 'true',
-      voice: 'none'
-    };
-
-    const res = await fetch('/api/jobs', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload)
+    runBtn.addEventListener('click', () => {
+      runFromInput().catch((error) => {
+        setBusy(false);
+        setStatus('Run failed', 'bad');
+        setLogs([String(error && error.message ? error.message : error)]);
+      });
     });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Submit failed', 'bad');
-      setOutput(data);
-      return;
-    }
 
-    currentId = data.id;
-    currentScript = null;
-    currentRecommendation = null;
-    currentFixPlan = null;
-    currentPromotionPolicy = null;
-    setCurrentRoot(data.rootOutputName || '');
-    currentJobIdField.value = currentId;
-    domainPackField.value = '';
-    qualityBox.className = 'quality-box muted';
-    qualityBox.textContent = 'No quality check yet.';
-    recommendationBox.className = 'quality-box muted';
-    recommendationBox.textContent = 'No recommendation yet.';
-    fixPlanBox.className = 'quality-box muted';
-    fixPlanBox.textContent = 'No section improvement plan yet.';
-    autoImproveBox.className = 'quality-box muted';
-    autoImproveBox.textContent = 'No auto-improve run yet.';
-    promotionPolicyBox.className = 'quality-box muted';
-    promotionPolicyBox.textContent = 'No promotion policy loaded.';
-    auditBox.className = 'quality-box muted';
-    auditBox.textContent = 'No automation audit yet.';
-    compareBox.className = 'quality-box muted';
-    compareBox.textContent = 'No compare run yet.';
-    videoLeft.removeAttribute('src');
-    videoRight.removeAttribute('src');
-    setStatus('Queued: ' + currentId, 'muted');
-    setOutput(data);
-    await refreshAuthAndBilling();
-    if (timer) clearInterval(timer);
-    timer = setInterval(poll, 2000);
-    poll();
-  });
+    urlInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        runBtn.click();
+      }
+    });
 
-  document.getElementById('regen').addEventListener('click', async () => {
-    const section = document.getElementById('section').value;
-    await regenerateSection(section);
-  });
+    polishBtn.addEventListener('click', () => {
+      runPolishPass().catch((error) => {
+        setBusy(false);
+        setStatus('Polish failed', 'bad');
+        setLogs([String(error && error.message ? error.message : error)]);
+      });
+    });
 
-  document.getElementById('loadScript').addEventListener('click', loadScript);
+    rerunBtn.addEventListener('click', () => {
+      if (!lastPayload) {
+        runBtn.click();
+        return;
+      }
+      queueGeneration(lastPayload).catch((error) => {
+        setBusy(false);
+        setStatus('Rerun failed', 'bad');
+        setLogs([String(error && error.message ? error.message : error)]);
+      });
+    });
 
-  document.getElementById('saveScript').addEventListener('click', async () => {
-    await saveScriptDraft();
-  });
+    document.querySelectorAll('.chip[data-url]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const value = el.getAttribute('data-url') || '';
+        urlInput.value = value;
+        urlInput.focus();
+      });
+    });
 
-  document.getElementById('checkScript').addEventListener('click', async () => {
-    const saved = await saveScriptDraft();
-    if (!saved || !saved.ok) return;
-    const quality = await runQualityCheck(false);
-    if (quality && quality.qualityReport) {
-      setStatus(quality.qualityReport.passed ? 'Quality check passed' : 'Quality check failed', quality.qualityReport.passed ? 'ok' : 'bad');
-    }
-  });
-
-  document.getElementById('rerender').addEventListener('click', async () => {
-    const saved = await saveScriptDraft();
-    if (!saved || !saved.ok) return;
-    const quality = await runQualityCheck(false);
-    if (!quality || !quality.qualityReport) return;
-    if (!quality.qualityReport.passed) {
-      setStatus('Rerender blocked by quality guard', 'bad');
-      return;
-    }
-    await queueRerender();
-  });
-
-  document.getElementById('autofixRerender').addEventListener('click', async () => {
-    const saved = await saveScriptDraft();
-    if (!saved || !saved.ok) return;
-    const quality = await runQualityCheck(true);
-    if (!quality || !quality.qualityReport) return;
-    if (!quality.qualityReport.passed) {
-      setStatus('Auto-fix could not pass quality guard', 'bad');
-      return;
-    }
-    setStatus('Auto-fix passed. Queueing rerender...', 'ok');
-    await queueRerender();
-  });
-
-  document.getElementById('refreshVersions').addEventListener('click', async () => {
-    await refreshVersions();
-  });
-
-  document.getElementById('runCompare').addEventListener('click', async () => {
-    await runCompare();
-  });
-
-  document.getElementById('recommendBest').addEventListener('click', async () => {
-    await refreshVersions();
-    await fetchRecommendation();
-  });
-
-  document.getElementById('refreshAudit').addEventListener('click', async () => {
-    await fetchAudit();
-  });
-
-  document.getElementById('savePromotionPolicy').addEventListener('click', async () => {
-    await savePromotionPolicy();
-  });
-
-  document.getElementById('loadPromotionPolicy').addEventListener('click', async () => {
-    await fetchPromotionPolicy();
-  });
-
-  document.getElementById('previewPolicyCalibration').addEventListener('click', async () => {
-    await calibratePromotionPolicy(false);
-  });
-
-  document.getElementById('applyPolicyCalibration').addEventListener('click', async () => {
-    await calibratePromotionPolicy(true);
-  });
-
-  promotionSegmentField.addEventListener('change', () => {
-    syncPolicyInputFromSegment();
-    renderPromotionPolicy(currentPromotionPolicy, 'Policy source: segment switched');
-  });
-
-  document.getElementById('recommendFixes').addEventListener('click', async () => {
-    await fetchImprovementPlan();
-  });
-
-  document.getElementById('applyTopFix').addEventListener('click', async () => {
-    await applyTopSectionFix();
-  });
-
-  document.getElementById('runAutoImprove').addEventListener('click', async () => {
-    await runAutoImprove();
-  });
-
-  document.getElementById('promoteWinner').addEventListener('click', async () => {
-    await refreshVersions();
-    const result = await promoteWinner();
-    if (!result) return;
-    setStatus('Promoted winner: v' + result.promoted.version + ' · ' + result.promoted.id, 'ok');
-    await fetchRecommendation();
-    await fetchAudit();
-  });
-
-  document.getElementById('saveLabel').addEventListener('click', async () => {
-    const jobId = String(metaTarget.value || '').trim();
-    if (!jobId) {
-      setStatus('Choose a version first', 'bad');
-      return;
-    }
-    await updateVersionMeta('set-label', {jobId, label: String(metaLabel.value || '').trim()});
-    setStatus('Label saved', 'ok');
-    await fetchRecommendation();
-  });
-
-  document.getElementById('saveOutcome').addEventListener('click', async () => {
-    const jobId = String(metaTarget.value || '').trim();
-    if (!jobId) {
-      setStatus('Choose a version first', 'bad');
-      return;
-    }
-    const outcome = String(metaOutcome.value || '').trim();
-    const outcomeNote = String(metaOutcomeNote.value || '').trim();
-    await updateVersionMeta('set-outcome', {jobId, outcome, outcomeNote});
-    setStatus(outcome ? ('Outcome set to ' + outcome) : 'Outcome cleared', 'ok');
-    await fetchRecommendation();
-  });
-
-  document.getElementById('toggleArchive').addEventListener('click', async () => {
-    const jobId = String(metaTarget.value || '').trim();
-    if (!jobId) {
-      setStatus('Choose a version first', 'bad');
-      return;
-    }
-    const target = versionById(jobId);
-    const nextArchived = !(target && target.meta && target.meta.archived);
-    await updateVersionMeta('set-archived', {jobId, archived: nextArchived});
-    setStatus(nextArchived ? 'Version archived' : 'Version restored', 'ok');
-    await fetchRecommendation();
-  });
-
-  document.getElementById('togglePin').addEventListener('click', async () => {
-    const jobId = String(metaTarget.value || '').trim();
-    if (!jobId) {
-      setStatus('Choose a version first', 'bad');
-      return;
-    }
-    const target = versionById(jobId);
-    const nextPinned = !(target && target.meta && target.meta.pinned);
-    await updateVersionMeta('set-pinned', {jobId, pinned: nextPinned});
-    setStatus(nextPinned ? 'Version pinned' : 'Version unpinned', 'ok');
-    await fetchRecommendation();
-  });
-
-  metaTarget.addEventListener('change', syncMetaForm);
-
-  refreshAuthAndBilling().catch((error) => {
-    setStatus('Auth restore failed', 'bad');
-    setOutput({error: error instanceof Error ? error.message : String(error)});
-  });
-</script>
+    setStatus('Idle', '');
+  </script>
 </body>
 </html>`;
 }

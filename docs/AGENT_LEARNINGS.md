@@ -1,5 +1,13 @@
 # Agent Learnings
 
+## Vision Lock Discipline
+
+- `docs/VISION.md` is the primary scope authority for product direction.
+- Smift is artifact-first and avatar-less; do not introduce anthropomorphic presenter work into core priorities.
+- For major roadmap changes, apply the scope checklist from `docs/VISION.md` before implementation.
+- If a task does not improve relevance, artifact quality, editability, or reliability, deprioritize it.
+- Run `npm run check:vision` after roadmap/positioning edits.
+
 ## Quality System Behavior
 
 - Strict mode (`--strict`) fails if warnings remain above threshold, not just blockers.

@@ -1,5 +1,17 @@
 # Product Roadmap
 
+## 0) Vision Lock (Do Not Drift)
+
+Smift positioning is fixed:
+- Artifact-first, premium product videos generated from URL.
+- Avatar-less by product strategy.
+- Compete on credibility and visual quality of product artifacts, not anthropomorphic presenters.
+
+Scope boundaries:
+- No anthropomorphic avatars, virtual hosts, or lip-sync presenter work as a core roadmap track.
+- Any major task must pass the scope checklist in `docs/VISION.md`.
+- If a task does not improve relevance, artifact quality, editability, or reliability, it is deprioritized.
+
 ## 1) Product Definition
 
 ### Target User (V1)
@@ -9,13 +21,13 @@
 
 ### Core Promise
 - Paste URL.
-- Get a relevant 35-45s video draft.
+- Get a relevant 35-45s artifact-first video draft.
 - Make small edits.
 - Export and publish.
 
 ### Why Customers Pay
 - Saves hours per video.
-- Produces materially better first draft than generic template tools.
+- Produces materially better first draft than generic template and avatar-first tools.
 - Works reliably across common startup website types.
 
 ## 2) Paid-Ready Definition (V1)
@@ -122,10 +134,11 @@ Scope:
 
 ## 5) Non-Negotiable Prioritization Rules
 
-1. Engine quality before hosting polish.
-2. Every task must map to one of the paid-ready gates.
-3. No infra-only work unless it unblocks user-visible quality or reliability.
-4. Every meaningful change must pass benchmark checks before merge.
+1. Vision lock first: artifact-first, avatar-less scope stays intact.
+2. Engine quality before hosting polish.
+3. Every task must map to one of the paid-ready gates.
+4. No infra-only work unless it unblocks user-visible quality or reliability.
+5. Every meaningful change must pass benchmark checks before merge.
 
 ## 6) What You Need To Do
 

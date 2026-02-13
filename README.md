@@ -4,6 +4,12 @@ URL-first product intro video generator.
 
 Paste a URL, generate a structured script with quality checks, produce narration, and render a launch-style video.
 
+## Positioning
+
+- Artifact-first, premium output.
+- Avatar-less by strategy (no anthropomorphic presenter focus).
+- Value comes from URL-to-meaning relevance, credibility, and visual polish.
+
 ## Requirements
 
 - Node 20+
@@ -25,6 +31,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `npm run eval:real:smoke`: CI-friendly real-URL smoke suite with threshold gating
 - `npm run eval:customer`: customer-style corpus benchmark
 - `npm run eval:customer:core`: core paying-segment benchmark (primary GTM gate)
+- `npm run check:vision`: scope-lock validation (vision/roadmap guard)
 - `npm run serve`: local self-serve queue + web UI (`http://localhost:3030`)
   - quality-only status view: `GET /api/jobs/:id/quality` (or `GET /api/jobs/:id?view=quality`)
   - section regenerate API: `POST /api/jobs/:id/regenerate` with body `{ "section": "hook|feature1|feature2|feature3|cta" }`
@@ -96,4 +103,5 @@ Generated artifacts land in `out/`:
 - `docs/MILESTONES.md`: sprint milestone log
 - `docs/AGENT_LEARNINGS.md`: implementation notes and known traps for future agents
 - `docs/ROADMAP.md`: paid-product roadmap, acceptance gates, and execution order
+- `docs/VISION.md`: non-negotiable positioning and anti-drift scope lock
 - `docs/CUSTOMER_CORPUS.md`: customer URL corpus and benchmark baselines

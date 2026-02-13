@@ -291,3 +291,21 @@
     - verify updated quality file and generation mode (`section-regenerate:*`).
   - `npm run eval:scraper`: `100%` (`5/5`)
   - `npm run eval:real:smoke`: `100%` pack accuracy (`10/10`), `100%` pass rate (`10/10`).
+
+### M22 - Vision Lock + Anti-Drift Guardrails
+
+- Added explicit product vision doc:
+  - `docs/VISION.md`
+  - locks positioning to artifact-first, avatar-less premium videos.
+  - defines non-goals and mandatory scope checklist for major work.
+- Updated roadmap with non-negotiable vision lock section:
+  - `docs/ROADMAP.md` now includes "Vision Lock (Do Not Drift)" and avatar-scope boundaries.
+- Updated project docs to reflect positioning:
+  - `README.md` now includes positioning and `check:vision` command.
+  - `docs/AGENT_LEARNINGS.md` now includes a vision discipline section.
+- Added automated scope guard:
+  - `scripts/check-vision-guard.js`
+  - validates required vision/roadmap/readme statements.
+  - scans `src/` for forbidden avatar-focused source terms.
+- Added CI enforcement:
+  - `.github/workflows/pack-regression.yml` now runs `npm run check:vision`.

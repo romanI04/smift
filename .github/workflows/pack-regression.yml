@@ -26,6 +26,9 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
+      - name: Vision scope guard
+        run: npm run check:vision
+
       - name: Domain pack regression suite
         run: npm run eval:packs
 

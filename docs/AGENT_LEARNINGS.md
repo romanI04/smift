@@ -47,8 +47,11 @@
 - Rerender jobs now create versioned outputs (`root`, `root-v2`, `root-v3`, ...), preserving prior artifacts.
 - Rerender endpoint now enforces quality guard server-side; it returns `409` if edited script fails quality checks.
 - Use `GET /api/projects/:rootOutputName/versions` to retrieve version history for compare UX.
+- Use `GET /api/projects/:rootOutputName/recommendation` for automated best-version ranking.
+- Use `POST /api/projects/:rootOutputName/version-meta` for label/archive/pin controls.
 - Use `GET /api/jobs/:id/compare?other=<jobId>` for quick quality/script delta summary.
 - Use `GET /api/jobs/:id/video` for preview playback in local compare panels.
+- Pinning a version now automatically unarchives it; archiving a version automatically unpins it.
 
 ## Domain Pack System
 

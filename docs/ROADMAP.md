@@ -137,7 +137,8 @@ Scope:
   - Continue Phase B UX polish:
     - structured editor + quality guard are implemented in local runner.
     - versioned rerenders + compare UX are implemented in local runner.
-    - next priority is compare-first decision support (best version recommendation) and version lifecycle controls.
+    - best-version recommendation and version lifecycle controls are implemented in local runner.
+    - next priority is recommendation confidence tuning against customer acceptance outcomes.
 
 ## 5) Non-Negotiable Prioritization Rules
 

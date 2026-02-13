@@ -46,6 +46,18 @@ interface JobRecord {
   logs: string[];
 }
 
+interface VersionMetaEntry {
+  label?: string;
+  archived?: boolean;
+  pinned?: boolean;
+}
+
+interface VersionMetadata {
+  rootOutputName: string;
+  updatedAt: string;
+  entries: Record<string, VersionMetaEntry>;
+}
+
 const cwd = path.resolve(__dirname, '../..');
 const outDir = path.join(cwd, 'out');
 const jobsDir = path.join(outDir, 'jobs');
@@ -518,8 +530,74 @@ const server = http.createServer(async (req, res) => {
       const parts = url.pathname.split('/').filter(Boolean);
       const rootOutputName = decodeURIComponent(parts[2] || '');
       if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
+      if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
       return sendJson(res, 200, {
         rootOutputName,
+        versions: listProjectVersions(rootOutputName),
+      });
+    }
+
+    if (method === 'GET' && /^\/api\/projects\/[^/]+\/recommendation$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const rootOutputName = decodeURIComponent(parts[2] || '');
+      if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
+      if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
+      const recommendation = recommendProjectVersion(rootOutputName);
+      return sendJson(res, 200, {
+        rootOutputName,
+        recommendation,
+      });
+    }
+
+    if (method === 'POST' && /^\/api\/projects\/[^/]+\/version-meta$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const rootOutputName = decodeURIComponent(parts[2] || '');
+      if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
+      if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
+      const payload = await readJsonBody(req);
+      const jobId = String(payload.jobId || '').trim();
+      if (!jobId) return sendJson(res, 400, {error: 'jobId is required'});
+      const job = jobs.get(jobId);
+      if (!job) return sendJson(res, 404, {error: 'job not found'});
+      if (getRootOutputName(job) !== rootOutputName) {
+        return sendJson(res, 400, {error: 'job does not belong to this project root'});
+      }
+
+      const action = String(payload.action || '').trim();
+      const metadata = readVersionMetadata(rootOutputName);
+      const entry = metadata.entries[jobId] ?? {};
+
+      if (action === 'set-label') {
+        const label = String(payload.label || '').trim();
+        entry.label = label || undefined;
+      } else if (action === 'set-archived') {
+        entry.archived = Boolean(payload.archived);
+        if (entry.archived) {
+          entry.pinned = false;
+        }
+      } else if (action === 'set-pinned') {
+        const pinned = Boolean(payload.pinned);
+        if (pinned) {
+          for (const [id, item] of Object.entries(metadata.entries)) {
+            metadata.entries[id] = {...item, pinned: false};
+          }
+        }
+        entry.pinned = pinned;
+        if (pinned) {
+          entry.archived = false;
+        }
+      } else {
+        return sendJson(res, 400, {error: 'action must be one of: set-label, set-archived, set-pinned'});
+      }
+
+      metadata.entries[jobId] = entry;
+      metadata.updatedAt = new Date().toISOString();
+      writeVersionMetadata(rootOutputName, metadata);
+
+      return sendJson(res, 200, {
+        rootOutputName,
+        updated: true,
+        metadata,
         versions: listProjectVersions(rootOutputName),
       });
     }
@@ -855,6 +933,8 @@ function qualitySummaryFor(job: JobRecord) {
       path: null,
       score: null,
       passed: null,
+      blockerCount: null,
+      warningCount: null,
       generationMode: null,
       domainPack: null,
       domainPackConfidence: null,
@@ -866,13 +946,17 @@ function qualitySummaryFor(job: JobRecord) {
       generationMode?: string;
       domainPack?: string;
       domainPackConfidence?: number;
-      qualityReport?: {score?: number; passed?: boolean};
+      qualityReport?: {score?: number; passed?: boolean; blockers?: string[]; warnings?: string[]};
     };
+    const blockers = Array.isArray(parsed.qualityReport?.blockers) ? parsed.qualityReport?.blockers ?? [] : [];
+    const warnings = Array.isArray(parsed.qualityReport?.warnings) ? parsed.qualityReport?.warnings ?? [] : [];
     return {
       available: true,
       path: qualityPath,
       score: parsed.qualityReport?.score ?? null,
       passed: parsed.qualityReport?.passed ?? null,
+      blockerCount: blockers.length,
+      warningCount: warnings.length,
       generationMode: parsed.generationMode ?? null,
       domainPack: parsed.domainPack ?? null,
       domainPackConfidence: parsed.domainPackConfidence ?? null,
@@ -883,6 +967,8 @@ function qualitySummaryFor(job: JobRecord) {
       path: qualityPath,
       score: null,
       passed: null,
+      blockerCount: null,
+      warningCount: null,
       generationMode: null,
       domainPack: null,
       domainPackConfidence: null,
@@ -891,11 +977,39 @@ function qualitySummaryFor(job: JobRecord) {
   }
 }
 
+function metadataPathForRoot(rootOutputName: string): string {
+  return path.join(outDir, `${rootOutputName}-version-meta.json`);
+}
+
+function readVersionMetadata(rootOutputName: string): VersionMetadata {
+  const filePath = metadataPathForRoot(rootOutputName);
+  const parsed = safeReadJson(filePath);
+  if (parsed && typeof parsed === 'object' && typeof parsed.rootOutputName === 'string' && parsed.entries && typeof parsed.entries === 'object') {
+    return {
+      rootOutputName: String(parsed.rootOutputName),
+      updatedAt: String(parsed.updatedAt || ''),
+      entries: parsed.entries as Record<string, VersionMetaEntry>,
+    };
+  }
+  return {
+    rootOutputName,
+    updatedAt: new Date(0).toISOString(),
+    entries: {},
+  };
+}
+
+function writeVersionMetadata(rootOutputName: string, metadata: VersionMetadata) {
+  const filePath = metadataPathForRoot(rootOutputName);
+  fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2));
+}
+
 function listProjectVersions(rootOutputName: string) {
+  const metadata = readVersionMetadata(rootOutputName);
   const items = [...jobs.values()]
     .filter((job) => getRootOutputName(job) === rootOutputName)
     .map((job) => {
       const artifacts = artifactsFor(job);
+      const meta = metadata.entries[job.id] ?? {};
       return {
         id: job.id,
         outputName: job.outputName,
@@ -908,10 +1022,117 @@ function listProjectVersions(rootOutputName: string) {
         quality: qualitySummaryFor(job),
         artifacts,
         videoUrl: artifacts.videoPath ? `/api/jobs/${job.id}/video` : null,
+        meta: {
+          label: meta.label ?? null,
+          archived: Boolean(meta.archived),
+          pinned: Boolean(meta.pinned),
+        },
       };
     })
     .sort((a, b) => b.version - a.version || b.createdAt.localeCompare(a.createdAt));
   return items;
+}
+
+function recommendProjectVersion(rootOutputName: string) {
+  const versions = listProjectVersions(rootOutputName);
+  const activeVersions = versions.filter((item) => !item.meta.archived);
+  if (activeVersions.length === 0) {
+    return {
+      recommended: null,
+      ranking: [],
+      reason: 'No active versions available.',
+    };
+  }
+
+  const pinned = activeVersions.find((item) => item.meta.pinned);
+  if (pinned) {
+    return {
+      recommended: {
+        id: pinned.id,
+        version: pinned.version,
+        outputName: pinned.outputName,
+        composite: 999,
+        rationale: [`Pinned by operator (status=${pinned.status})`],
+      },
+      ranking: activeVersions.map((item) => ({
+        id: item.id,
+        version: item.version,
+        outputName: item.outputName,
+        composite: item.id === pinned.id ? 999 : scoreVersionCandidate(item).composite,
+      })),
+      reason: 'Pinned version takes precedence.',
+    };
+  }
+
+  const scored = activeVersions
+    .map((item) => {
+      const score = scoreVersionCandidate(item);
+      return {
+        id: item.id,
+        version: item.version,
+        outputName: item.outputName,
+        composite: score.composite,
+        rationale: score.rationale,
+      };
+    })
+    .sort((a, b) => b.composite - a.composite || b.version - a.version);
+
+  const recommended = scored[0] ?? null;
+  return {
+    recommended,
+    ranking: scored,
+    reason: recommended
+      ? `Selected highest composite score (${recommended.composite}).`
+      : 'No comparable versions found.',
+  };
+}
+
+function scoreVersionCandidate(version: ReturnType<typeof listProjectVersions>[number]) {
+  let composite = Number(version.quality.score ?? 0);
+  const rationale: string[] = [`base quality score=${version.quality.score ?? 0}`];
+
+  if (version.quality.passed === true) {
+    composite += 20;
+    rationale.push('+20 quality pass bonus');
+  } else {
+    composite -= 20;
+    rationale.push('-20 quality fail penalty');
+  }
+
+  if (typeof version.quality.blockerCount === 'number' && version.quality.blockerCount > 0) {
+    const penalty = version.quality.blockerCount * 8;
+    composite -= penalty;
+    rationale.push(`-${penalty} blockers penalty`);
+  }
+  if (typeof version.quality.warningCount === 'number' && version.quality.warningCount > 0) {
+    const penalty = version.quality.warningCount * 2;
+    composite -= penalty;
+    rationale.push(`-${penalty} warnings penalty`);
+  }
+
+  if (version.status !== 'completed') {
+    composite -= 30;
+    rationale.push('-30 non-completed penalty');
+  }
+  if (!version.artifacts.videoPath) {
+    composite -= 25;
+    rationale.push('-25 missing-video penalty');
+  }
+  if (version.mode === 'rerender') {
+    composite += 1;
+    rationale.push('+1 rerender iteration bonus');
+  }
+  const recency = Math.min(version.version, 8) * 0.75;
+  composite += recency;
+  rationale.push(`+${recency.toFixed(2)} recency bonus`);
+
+  if (version.meta.label) {
+    composite += 0.5;
+    rationale.push('+0.5 labeled-version preference');
+  }
+
+  composite = Number(composite.toFixed(2));
+  return {composite, rationale};
 }
 
 function compareJobs(left: JobRecord, right: JobRecord) {
@@ -1001,6 +1222,10 @@ function sendVideo(res: http.ServerResponse, videoPath: string) {
 
 function countWords(value: string): number {
   return value.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function isSafeOutputName(value: string): boolean {
+  return /^[a-zA-Z0-9-]+$/.test(value);
 }
 
 function persistJob(job: JobRecord) {
@@ -1234,8 +1459,23 @@ function renderHtml() {
           </div>
           <div class="row">
             <button id="refreshVersions" class="secondary">Refresh Versions</button>
+            <button id="recommendBest" class="secondary">Recommend Best</button>
           </div>
           <div id="versionsList" class="versions-list muted">No versions loaded yet.</div>
+          <div id="recommendationBox" class="quality-box muted">No recommendation yet.</div>
+          <div class="field">
+            <label>Manage Version (Job ID)</label>
+            <select id="metaTarget"></select>
+          </div>
+          <div class="field">
+            <label>Version Label</label>
+            <input id="metaLabel" type="text" placeholder="e.g. publish-candidate" />
+          </div>
+          <div class="row">
+            <button id="saveLabel" class="secondary">Save Label</button>
+            <button id="toggleArchive" class="secondary">Toggle Archive</button>
+            <button id="togglePin" class="secondary">Toggle Pin</button>
+          </div>
           <div class="field">
             <label>Compare Left Job ID</label>
             <select id="compareLeft"></select>
@@ -1270,6 +1510,9 @@ function renderHtml() {
   const domainPackField = document.getElementById('domainPackId');
   const rootOutputField = document.getElementById('rootOutputName');
   const versionsList = document.getElementById('versionsList');
+  const recommendationBox = document.getElementById('recommendationBox');
+  const metaTarget = document.getElementById('metaTarget');
+  const metaLabel = document.getElementById('metaLabel');
   const compareLeft = document.getElementById('compareLeft');
   const compareRight = document.getElementById('compareRight');
   const compareBox = document.getElementById('compareBox');
@@ -1416,16 +1659,27 @@ function renderHtml() {
   }
 
   function renderVersionOptions(versions) {
-    const options = versions.map((item) => '<option value=\"' + item.id + '\">v' + item.version + ' · ' + item.id + '</option>');
+    const options = versions.map((item) => {
+      const flags = []
+      if (item.meta && item.meta.pinned) flags.push('pinned');
+      if (item.meta && item.meta.archived) flags.push('archived');
+      if (item.meta && item.meta.label) flags.push(item.meta.label);
+      const suffix = flags.length > 0 ? ' [' + flags.join(', ') + ']' : '';
+      return '<option value=\"' + item.id + '\">v' + item.version + ' · ' + item.id + suffix + '</option>';
+    });
     compareLeft.innerHTML = options.join('');
     compareRight.innerHTML = options.join('');
+    metaTarget.innerHTML = options.join('');
     if (versions.length >= 2) {
       compareLeft.value = versions[0].id;
       compareRight.value = versions[1].id;
+      metaTarget.value = versions[0].id;
     } else if (versions.length === 1) {
       compareLeft.value = versions[0].id;
       compareRight.value = versions[0].id;
+      metaTarget.value = versions[0].id;
     }
+    syncMetaForm();
   }
 
   function renderVersionsList(versions) {
@@ -1444,8 +1698,13 @@ function renderHtml() {
           : item.status === 'failed'
             ? '<span class=\"bad\">failed</span>'
             : '<span class=\"muted\">' + item.status + '</span>';
+        const tags = [];
+        if (item.meta && item.meta.pinned) tags.push('pinned');
+        if (item.meta && item.meta.archived) tags.push('archived');
+        if (item.meta && item.meta.label) tags.push('label:' + item.meta.label);
+        const tagLine = tags.length > 0 ? '<span class=\"hint\">' + tags.join(' · ') + '</span>' : '';
         return '<div class=\"version-item\">'
-          + '<div><strong>v' + item.version + '</strong> · ' + item.id + '<br/><span class=\"muted\">' + item.outputName + '</span></div>'
+          + '<div><strong>v' + item.version + '</strong> · ' + item.id + '<br/><span class=\"muted\">' + item.outputName + '</span><br/>' + tagLine + '</div>'
           + '<div>' + statusBadge + '</div>'
           + '</div>';
       })
@@ -1470,8 +1729,77 @@ function renderHtml() {
     renderVersionsList(data.versions || []);
   }
 
+  async function fetchRecommendation() {
+    if (!currentRootOutputName) {
+      recommendationBox.className = 'quality-box muted';
+      recommendationBox.textContent = 'No project root selected yet.';
+      return null;
+    }
+    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/recommendation');
+    const data = await res.json();
+    if (!res.ok) {
+      recommendationBox.className = 'quality-box bad';
+      recommendationBox.textContent = data.error || 'Recommendation failed';
+      return null;
+    }
+    const rec = data.recommendation || {};
+    if (!rec.recommended) {
+      recommendationBox.className = 'quality-box muted';
+      recommendationBox.textContent = rec.reason || 'No recommendation available.';
+      return data;
+    }
+    const lines = [
+      'Recommended: v' + rec.recommended.version + ' · ' + rec.recommended.id,
+      'Output: ' + rec.recommended.outputName,
+      'Composite: ' + rec.recommended.composite,
+      'Why: ' + (rec.reason || ''),
+    ];
+    if (Array.isArray(rec.recommended.rationale) && rec.recommended.rationale.length > 0) {
+      lines.push('Rationale:');
+      rec.recommended.rationale.forEach((item) => lines.push('  - ' + item));
+    }
+    recommendationBox.className = 'quality-box ok';
+    recommendationBox.textContent = lines.join('\\n');
+    const best = versionById(rec.recommended.id);
+    if (best) {
+      compareRight.value = best.id;
+      const leftCandidate = currentVersions.find((item) => item.id !== best.id) || best;
+      compareLeft.value = leftCandidate.id;
+      if (best.videoUrl) videoRight.src = best.videoUrl;
+      if (leftCandidate.videoUrl) videoLeft.src = leftCandidate.videoUrl;
+    }
+    setOutput(data);
+    return data;
+  }
+
+  async function updateVersionMeta(action, payload) {
+    if (!currentRootOutputName) {
+      setStatus('No project root selected', 'bad');
+      return null;
+    }
+    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/version-meta', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(Object.assign({action}, payload || {}))
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('Version metadata update failed', 'bad');
+      setOutput(data);
+      return null;
+    }
+    renderVersionsList(data.versions || []);
+    setOutput(data);
+    return data;
+  }
+
   function versionById(id) {
     return currentVersions.find((item) => item.id === id) || null;
+  }
+
+  function syncMetaForm() {
+    const target = versionById(metaTarget.value);
+    metaLabel.value = target && target.meta && target.meta.label ? target.meta.label : '';
   }
 
   async function runCompare() {
@@ -1525,10 +1853,12 @@ function renderHtml() {
       setStatus('Completed', 'ok');
       currentJobIdField.value = currentId;
       await refreshVersions();
+      await fetchRecommendation();
       clearInterval(timer);
     } else if (data.status === 'failed') {
       setStatus('Failed', 'bad');
       await refreshVersions();
+      await fetchRecommendation();
       clearInterval(timer);
     } else {
       setStatus('Running: ' + data.status, 'muted');
@@ -1674,6 +2004,8 @@ function renderHtml() {
     domainPackField.value = '';
     qualityBox.className = 'quality-box muted';
     qualityBox.textContent = 'No quality check yet.';
+    recommendationBox.className = 'quality-box muted';
+    recommendationBox.textContent = 'No recommendation yet.';
     compareBox.className = 'quality-box muted';
     compareBox.textContent = 'No compare run yet.';
     videoLeft.removeAttribute('src');
@@ -1756,6 +2088,50 @@ function renderHtml() {
   document.getElementById('runCompare').addEventListener('click', async () => {
     await runCompare();
   });
+
+  document.getElementById('recommendBest').addEventListener('click', async () => {
+    await refreshVersions();
+    await fetchRecommendation();
+  });
+
+  document.getElementById('saveLabel').addEventListener('click', async () => {
+    const jobId = String(metaTarget.value || '').trim();
+    if (!jobId) {
+      setStatus('Choose a version first', 'bad');
+      return;
+    }
+    await updateVersionMeta('set-label', {jobId, label: String(metaLabel.value || '').trim()});
+    setStatus('Label saved', 'ok');
+    await fetchRecommendation();
+  });
+
+  document.getElementById('toggleArchive').addEventListener('click', async () => {
+    const jobId = String(metaTarget.value || '').trim();
+    if (!jobId) {
+      setStatus('Choose a version first', 'bad');
+      return;
+    }
+    const target = versionById(jobId);
+    const nextArchived = !(target && target.meta && target.meta.archived);
+    await updateVersionMeta('set-archived', {jobId, archived: nextArchived});
+    setStatus(nextArchived ? 'Version archived' : 'Version restored', 'ok');
+    await fetchRecommendation();
+  });
+
+  document.getElementById('togglePin').addEventListener('click', async () => {
+    const jobId = String(metaTarget.value || '').trim();
+    if (!jobId) {
+      setStatus('Choose a version first', 'bad');
+      return;
+    }
+    const target = versionById(jobId);
+    const nextPinned = !(target && target.meta && target.meta.pinned);
+    await updateVersionMeta('set-pinned', {jobId, pinned: nextPinned});
+    setStatus(nextPinned ? 'Version pinned' : 'Version unpinned', 'ok');
+    await fetchRecommendation();
+  });
+
+  metaTarget.addEventListener('change', syncMetaForm);
 </script>
 </body>
 </html>`;

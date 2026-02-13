@@ -402,3 +402,25 @@
     - rerender creates new versioned output (e.g. `linear-app-v3`)
     - compare endpoint returns deltas
     - video endpoint serves mp4 (`200`).
+
+### M27 - Best-Version Recommendation + Lifecycle Controls
+
+- Added recommendation API:
+  - `GET /api/projects/:rootOutputName/recommendation`
+  - ranks non-archived versions using quality score/pass state, blocker/warning counts, render availability, and recency.
+- Added version metadata API:
+  - `POST /api/projects/:rootOutputName/version-meta`
+  - supports `set-label`, `set-archived`, `set-pinned`.
+- Added lifecycle consistency rules:
+  - pinning auto-unarchives target version.
+  - archiving auto-unpins target version.
+- Added local runner controls:
+  - recommend-best button + recommendation rationale panel.
+  - label/archive/pin actions for selected version.
+  - compare selectors auto-sync with recommendation result.
+- Validation:
+  - `npx tsc --noEmit` pass.
+  - API checks:
+    - recommendation endpoint returns ranked output.
+    - pin override is honored by recommendation.
+    - compare endpoint remains functional after metadata updates.

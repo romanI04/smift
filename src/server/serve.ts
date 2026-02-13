@@ -20,6 +20,7 @@ import {normalizeScriptPayload, toPersistedScript} from '../pipeline/script-io';
 
 type JobStatus = 'queued' | 'running' | 'completed' | 'failed';
 type JobMode = 'generate' | 'rerender';
+type VersionOutcome = 'accepted' | 'rejected';
 
 interface JobRecord {
   id: string;
@@ -50,12 +51,51 @@ interface VersionMetaEntry {
   label?: string;
   archived?: boolean;
   pinned?: boolean;
+  outcome?: VersionOutcome;
+  outcomeNote?: string;
+  outcomeAt?: string;
+  promotedAt?: string;
 }
 
 interface VersionMetadata {
   rootOutputName: string;
   updatedAt: string;
   entries: Record<string, VersionMetaEntry>;
+}
+
+interface ProjectVersion {
+  id: string;
+  outputName: string;
+  rootOutputName: string;
+  version: number;
+  status: JobStatus;
+  mode: JobMode;
+  createdAt: string;
+  finishedAt: string | null;
+  quality: ReturnType<typeof qualitySummaryFor>;
+  artifacts: ReturnType<typeof artifactsFor>;
+  videoUrl: string | null;
+  meta: {
+    label: string | null;
+    archived: boolean;
+    pinned: boolean;
+    outcome: VersionOutcome | null;
+    outcomeNote: string | null;
+    outcomeAt: string | null;
+    promotedAt: string | null;
+  };
+}
+
+interface OutcomeCounts {
+  accepted: number;
+  rejected: number;
+}
+
+interface OutcomeLearning {
+  totalOutcomes: number;
+  byPack: Map<string, OutcomeCounts>;
+  byTemplate: Map<string, OutcomeCounts>;
+  byPackTemplate: Map<string, OutcomeCounts>;
 }
 
 const cwd = path.resolve(__dirname, '../..');
@@ -549,12 +589,37 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    if (method === 'POST' && /^\/api\/projects\/[^/]+\/promote$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const rootOutputName = decodeURIComponent(parts[2] || '');
+      if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
+      if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
+      const payload = await readJsonBody(req);
+      const requestedJobId = String(payload.jobId || '').trim() || null;
+      const promoted = promoteProjectWinner(rootOutputName, requestedJobId);
+      if (!promoted.ok) {
+        return sendJson(res, promoted.code, {error: promoted.error});
+      }
+      return sendJson(res, 200, {
+        rootOutputName,
+        promoted: promoted.promoted,
+        metadata: promoted.metadata,
+        versions: listProjectVersions(rootOutputName),
+        recommendation: recommendProjectVersion(rootOutputName),
+      });
+    }
+
     if (method === 'POST' && /^\/api\/projects\/[^/]+\/version-meta$/.test(url.pathname)) {
       const parts = url.pathname.split('/').filter(Boolean);
       const rootOutputName = decodeURIComponent(parts[2] || '');
       if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
       if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
       const payload = await readJsonBody(req);
+      const action = String(payload.action || '').trim();
+      const actionNeedsJobId = new Set(['set-label', 'set-archived', 'set-pinned', 'set-outcome']);
+      if (!actionNeedsJobId.has(action)) {
+        return sendJson(res, 400, {error: 'action must be one of: set-label, set-archived, set-pinned, set-outcome'});
+      }
       const jobId = String(payload.jobId || '').trim();
       if (!jobId) return sendJson(res, 400, {error: 'jobId is required'});
       const job = jobs.get(jobId);
@@ -563,7 +628,6 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 400, {error: 'job does not belong to this project root'});
       }
 
-      const action = String(payload.action || '').trim();
       const metadata = readVersionMetadata(rootOutputName);
       const entry = metadata.entries[jobId] ?? {};
 
@@ -586,8 +650,22 @@ const server = http.createServer(async (req, res) => {
         if (pinned) {
           entry.archived = false;
         }
+      } else if (action === 'set-outcome') {
+        const rawOutcome = String(payload.outcome || '').trim().toLowerCase();
+        const note = String(payload.outcomeNote || '').trim();
+        if (!rawOutcome) {
+          entry.outcome = undefined;
+          entry.outcomeAt = undefined;
+          entry.outcomeNote = note || undefined;
+        } else if (rawOutcome === 'accepted' || rawOutcome === 'rejected') {
+          entry.outcome = rawOutcome;
+          entry.outcomeAt = new Date().toISOString();
+          entry.outcomeNote = note || undefined;
+        } else {
+          return sendJson(res, 400, {error: 'outcome must be accepted, rejected, or empty'});
+        }
       } else {
-        return sendJson(res, 400, {error: 'action must be one of: set-label, set-archived, set-pinned'});
+        return sendJson(res, 400, {error: 'action must be one of: set-label, set-archived, set-pinned, set-outcome'});
       }
 
       metadata.entries[jobId] = entry;
@@ -936,6 +1014,7 @@ function qualitySummaryFor(job: JobRecord) {
       blockerCount: null,
       warningCount: null,
       generationMode: null,
+      template: null,
       domainPack: null,
       domainPackConfidence: null,
     };
@@ -944,6 +1023,7 @@ function qualitySummaryFor(job: JobRecord) {
   try {
     const parsed = JSON.parse(fs.readFileSync(qualityPath, 'utf-8')) as {
       generationMode?: string;
+      template?: string;
       domainPack?: string;
       domainPackConfidence?: number;
       qualityReport?: {score?: number; passed?: boolean; blockers?: string[]; warnings?: string[]};
@@ -958,6 +1038,7 @@ function qualitySummaryFor(job: JobRecord) {
       blockerCount: blockers.length,
       warningCount: warnings.length,
       generationMode: parsed.generationMode ?? null,
+      template: parsed.template ?? null,
       domainPack: parsed.domainPack ?? null,
       domainPackConfidence: parsed.domainPackConfidence ?? null,
     };
@@ -970,6 +1051,7 @@ function qualitySummaryFor(job: JobRecord) {
       blockerCount: null,
       warningCount: null,
       generationMode: null,
+      template: null,
       domainPack: null,
       domainPackConfidence: null,
       error: 'quality file parse failed',
@@ -1003,7 +1085,7 @@ function writeVersionMetadata(rootOutputName: string, metadata: VersionMetadata)
   fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2));
 }
 
-function listProjectVersions(rootOutputName: string) {
+function listProjectVersions(rootOutputName: string): ProjectVersion[] {
   const metadata = readVersionMetadata(rootOutputName);
   const items = [...jobs.values()]
     .filter((job) => getRootOutputName(job) === rootOutputName)
@@ -1026,6 +1108,10 @@ function listProjectVersions(rootOutputName: string) {
           label: meta.label ?? null,
           archived: Boolean(meta.archived),
           pinned: Boolean(meta.pinned),
+          outcome: meta.outcome === 'accepted' || meta.outcome === 'rejected' ? meta.outcome : null,
+          outcomeNote: meta.outcomeNote ?? null,
+          outcomeAt: meta.outcomeAt ?? null,
+          promotedAt: meta.promotedAt ?? null,
         },
       };
     })
@@ -1035,59 +1121,84 @@ function listProjectVersions(rootOutputName: string) {
 
 function recommendProjectVersion(rootOutputName: string) {
   const versions = listProjectVersions(rootOutputName);
+  const learning = buildOutcomeLearning();
   const activeVersions = versions.filter((item) => !item.meta.archived);
   if (activeVersions.length === 0) {
     return {
       recommended: null,
       ranking: [],
       reason: 'No active versions available.',
+      learning: {
+        totalOutcomes: learning.totalOutcomes,
+      },
     };
   }
 
   const pinned = activeVersions.find((item) => item.meta.pinned);
   if (pinned) {
+    const confidence = pinned.meta.outcome === 'rejected' ? 0.6 : 1;
     return {
       recommended: {
         id: pinned.id,
         version: pinned.version,
         outputName: pinned.outputName,
         composite: 999,
+        confidence,
         rationale: [`Pinned by operator (status=${pinned.status})`],
       },
       ranking: activeVersions.map((item) => ({
         id: item.id,
         version: item.version,
         outputName: item.outputName,
-        composite: item.id === pinned.id ? 999 : scoreVersionCandidate(item).composite,
+        composite: item.id === pinned.id ? 999 : scoreVersionCandidate(item, learning).composite,
       })),
       reason: 'Pinned version takes precedence.',
+      learning: {
+        totalOutcomes: learning.totalOutcomes,
+      },
     };
   }
 
   const scored = activeVersions
     .map((item) => {
-      const score = scoreVersionCandidate(item);
+      const score = scoreVersionCandidate(item, learning);
       return {
         id: item.id,
         version: item.version,
         outputName: item.outputName,
         composite: score.composite,
         rationale: score.rationale,
+        outcome: item.meta.outcome,
       };
     })
     .sort((a, b) => b.composite - a.composite || b.version - a.version);
 
-  const recommended = scored[0] ?? null;
+  const confidence = recommendationConfidence(scored, learning.totalOutcomes);
+  const ranking = scored.map(({outcome: _outcome, ...item}) => item);
+  const top = scored[0] ?? null;
+  const recommended = top
+    ? {
+        id: top.id,
+        version: top.version,
+        outputName: top.outputName,
+        composite: top.composite,
+        confidence,
+        rationale: top.rationale,
+      }
+    : null;
   return {
     recommended,
-    ranking: scored,
+    ranking,
     reason: recommended
-      ? `Selected highest composite score (${recommended.composite}).`
+      ? `Selected highest composite score (${recommended.composite}) with confidence ${confidence}.`
       : 'No comparable versions found.',
+    learning: {
+      totalOutcomes: learning.totalOutcomes,
+    },
   };
 }
 
-function scoreVersionCandidate(version: ReturnType<typeof listProjectVersions>[number]) {
+function scoreVersionCandidate(version: ProjectVersion, learning: OutcomeLearning) {
   let composite = Number(version.quality.score ?? 0);
   const rationale: string[] = [`base quality score=${version.quality.score ?? 0}`];
 
@@ -1130,9 +1241,196 @@ function scoreVersionCandidate(version: ReturnType<typeof listProjectVersions>[n
     composite += 0.5;
     rationale.push('+0.5 labeled-version preference');
   }
+  if (version.meta.promotedAt) {
+    composite += 0.5;
+    rationale.push('+0.5 prior promotion stability bonus');
+  }
+
+  if (version.meta.outcome === 'accepted') {
+    composite += 18;
+    rationale.push('+18 accepted-outcome bonus');
+  } else if (version.meta.outcome === 'rejected') {
+    composite -= 18;
+    rationale.push('-18 rejected-outcome penalty');
+  }
+
+  const packKey = normalizeOutcomeKey(version.quality.domainPack);
+  const templateKey = normalizeOutcomeKey(version.quality.template);
+  if (packKey !== 'unknown' && templateKey !== 'unknown') {
+    const pairLift = outcomeLift(learning.byPackTemplate.get(`${packKey}|${templateKey}`), 16);
+    if (pairLift.evidence > 0) {
+      composite += pairLift.adjustment;
+      rationale.push(`${formatSigned(pairLift.adjustment)} historical pack+template lift (${Math.round(pairLift.rate * 100)}% over ${pairLift.evidence} outcomes)`);
+    }
+  }
+  if (packKey !== 'unknown') {
+    const packLift = outcomeLift(learning.byPack.get(packKey), 10);
+    if (packLift.evidence > 0) {
+      composite += packLift.adjustment;
+      rationale.push(`${formatSigned(packLift.adjustment)} historical pack lift (${Math.round(packLift.rate * 100)}% over ${packLift.evidence} outcomes)`);
+    }
+  }
+  if (templateKey !== 'unknown') {
+    const templateLift = outcomeLift(learning.byTemplate.get(templateKey), 8);
+    if (templateLift.evidence > 0) {
+      composite += templateLift.adjustment;
+      rationale.push(`${formatSigned(templateLift.adjustment)} historical template lift (${Math.round(templateLift.rate * 100)}% over ${templateLift.evidence} outcomes)`);
+    }
+  }
 
   composite = Number(composite.toFixed(2));
   return {composite, rationale};
+}
+
+function recommendationConfidence(
+  scored: Array<{composite: number; outcome: VersionOutcome | null}>,
+  totalOutcomes: number,
+): number {
+  if (scored.length === 0) return 0;
+  const top = scored[0];
+  const second = scored[1];
+  const gap = second ? top.composite - second.composite : 12;
+  const gapScore = clamp01((gap + 3) / 20);
+  const evidenceScore = clamp01(totalOutcomes / 18);
+  let confidence = 0.7 * gapScore + 0.3 * evidenceScore;
+  if (top.outcome === 'accepted') confidence += 0.08;
+  if (top.outcome === 'rejected') confidence -= 0.2;
+  return Number(clamp01(confidence).toFixed(2));
+}
+
+function buildOutcomeLearning(): OutcomeLearning {
+  const byPack = new Map<string, OutcomeCounts>();
+  const byTemplate = new Map<string, OutcomeCounts>();
+  const byPackTemplate = new Map<string, OutcomeCounts>();
+  const metadataCache = new Map<string, VersionMetadata>();
+  let totalOutcomes = 0;
+
+  for (const job of jobs.values()) {
+    const root = getRootOutputName(job);
+    const metadata = metadataCache.get(root) ?? readVersionMetadata(root);
+    if (!metadataCache.has(root)) metadataCache.set(root, metadata);
+    const entry = metadata.entries[job.id];
+    const outcome = entry?.outcome;
+    if (outcome !== 'accepted' && outcome !== 'rejected') continue;
+    const quality = qualitySummaryFor(job);
+    const packKey = normalizeOutcomeKey(quality.domainPack);
+    const templateKey = normalizeOutcomeKey(quality.template);
+    totalOutcomes += 1;
+    incrementOutcomeCounts(byPack, packKey, outcome);
+    incrementOutcomeCounts(byTemplate, templateKey, outcome);
+    incrementOutcomeCounts(byPackTemplate, `${packKey}|${templateKey}`, outcome);
+  }
+
+  return {
+    totalOutcomes,
+    byPack,
+    byTemplate,
+    byPackTemplate,
+  };
+}
+
+function incrementOutcomeCounts(map: Map<string, OutcomeCounts>, key: string, outcome: VersionOutcome) {
+  const existing = map.get(key) ?? {accepted: 0, rejected: 0};
+  if (outcome === 'accepted') existing.accepted += 1;
+  else existing.rejected += 1;
+  map.set(key, existing);
+}
+
+function normalizeOutcomeKey(value: unknown): string {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized || 'unknown';
+}
+
+function outcomeLift(counts: OutcomeCounts | undefined, weight: number) {
+  const accepted = counts?.accepted ?? 0;
+  const rejected = counts?.rejected ?? 0;
+  const evidence = accepted + rejected;
+  if (evidence === 0) {
+    return {
+      adjustment: 0,
+      evidence: 0,
+      rate: 0.5,
+    };
+  }
+  const rate = (accepted + 1) / (accepted + rejected + 2);
+  const lift = rate - 0.5;
+  const evidenceWeight = Math.min(1, evidence / 6);
+  const adjustment = Number((weight * lift * evidenceWeight).toFixed(2));
+  return {
+    adjustment,
+    evidence,
+    rate,
+  };
+}
+
+function clamp01(value: number): number {
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+
+function formatSigned(value: number): string {
+  const rounded = Number(value.toFixed(2));
+  return rounded >= 0 ? `+${rounded}` : `${rounded}`;
+}
+
+function promoteProjectWinner(
+  rootOutputName: string,
+  requestedJobId: string | null,
+): {ok: true; promoted: {id: string; version: number; outputName: string}; metadata: VersionMetadata}
+  | {ok: false; code: number; error: string} {
+  const versions = listProjectVersions(rootOutputName);
+  if (versions.length === 0) {
+    return {ok: false, code: 404, error: 'no versions available for this project'};
+  }
+
+  let targetId = requestedJobId;
+  if (!targetId) {
+    const recommendation = recommendProjectVersion(rootOutputName);
+    if (!recommendation.recommended?.id) {
+      return {ok: false, code: 409, error: 'no promotable recommendation available'};
+    }
+    targetId = recommendation.recommended.id;
+  }
+
+  const target = versions.find((item) => item.id === targetId);
+  if (!target) {
+    return {ok: false, code: 404, error: 'target version not found'};
+  }
+  if (target.status !== 'completed') {
+    return {ok: false, code: 409, error: 'target version is not completed'};
+  }
+  if (!target.artifacts.videoPath) {
+    return {ok: false, code: 409, error: 'target version has no rendered video to promote'};
+  }
+
+  const metadata = readVersionMetadata(rootOutputName);
+  for (const [id, item] of Object.entries(metadata.entries)) {
+    metadata.entries[id] = {...item, pinned: false};
+  }
+  const now = new Date().toISOString();
+  const next = metadata.entries[target.id] ?? {};
+  next.pinned = true;
+  next.archived = false;
+  next.promotedAt = now;
+  if (!next.label) next.label = 'publish-candidate';
+  if (!next.outcome) {
+    next.outcome = 'accepted';
+    next.outcomeAt = now;
+  }
+  metadata.entries[target.id] = next;
+  metadata.updatedAt = now;
+  writeVersionMetadata(rootOutputName, metadata);
+
+  return {
+    ok: true,
+    promoted: {
+      id: target.id,
+      version: target.version,
+      outputName: target.outputName,
+    },
+    metadata,
+  };
 }
 
 function compareJobs(left: JobRecord, right: JobRecord) {
@@ -1460,6 +1758,7 @@ function renderHtml() {
           <div class="row">
             <button id="refreshVersions" class="secondary">Refresh Versions</button>
             <button id="recommendBest" class="secondary">Recommend Best</button>
+            <button id="promoteWinner">Promote Winner</button>
           </div>
           <div id="versionsList" class="versions-list muted">No versions loaded yet.</div>
           <div id="recommendationBox" class="quality-box muted">No recommendation yet.</div>
@@ -1471,8 +1770,21 @@ function renderHtml() {
             <label>Version Label</label>
             <input id="metaLabel" type="text" placeholder="e.g. publish-candidate" />
           </div>
+          <div class="field">
+            <label>Outcome</label>
+            <select id="metaOutcome">
+              <option value="">unrated</option>
+              <option value="accepted">accepted</option>
+              <option value="rejected">rejected</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Outcome Note</label>
+            <input id="metaOutcomeNote" type="text" placeholder="optional context" />
+          </div>
           <div class="row">
             <button id="saveLabel" class="secondary">Save Label</button>
+            <button id="saveOutcome" class="secondary">Save Outcome</button>
             <button id="toggleArchive" class="secondary">Toggle Archive</button>
             <button id="togglePin" class="secondary">Toggle Pin</button>
           </div>
@@ -1513,6 +1825,8 @@ function renderHtml() {
   const recommendationBox = document.getElementById('recommendationBox');
   const metaTarget = document.getElementById('metaTarget');
   const metaLabel = document.getElementById('metaLabel');
+  const metaOutcome = document.getElementById('metaOutcome');
+  const metaOutcomeNote = document.getElementById('metaOutcomeNote');
   const compareLeft = document.getElementById('compareLeft');
   const compareRight = document.getElementById('compareRight');
   const compareBox = document.getElementById('compareBox');
@@ -1523,6 +1837,7 @@ function renderHtml() {
   let currentScript = null;
   let currentRootOutputName = '';
   let currentVersions = [];
+  let currentRecommendation = null;
 
   function setStatus(text, kind='') {
     status.textContent = text;
@@ -1663,6 +1978,8 @@ function renderHtml() {
       const flags = []
       if (item.meta && item.meta.pinned) flags.push('pinned');
       if (item.meta && item.meta.archived) flags.push('archived');
+      if (item.meta && item.meta.outcome) flags.push(item.meta.outcome);
+      if (item.meta && item.meta.promotedAt) flags.push('promoted');
       if (item.meta && item.meta.label) flags.push(item.meta.label);
       const suffix = flags.length > 0 ? ' [' + flags.join(', ') + ']' : '';
       return '<option value=\"' + item.id + '\">v' + item.version + ' · ' + item.id + suffix + '</option>';
@@ -1701,6 +2018,8 @@ function renderHtml() {
         const tags = [];
         if (item.meta && item.meta.pinned) tags.push('pinned');
         if (item.meta && item.meta.archived) tags.push('archived');
+        if (item.meta && item.meta.promotedAt) tags.push('promoted');
+        if (item.meta && item.meta.outcome) tags.push('outcome:' + item.meta.outcome);
         if (item.meta && item.meta.label) tags.push('label:' + item.meta.label);
         const tagLine = tags.length > 0 ? '<span class=\"hint\">' + tags.join(' · ') + '</span>' : '';
         return '<div class=\"version-item\">'
@@ -1731,6 +2050,7 @@ function renderHtml() {
 
   async function fetchRecommendation() {
     if (!currentRootOutputName) {
+      currentRecommendation = null;
       recommendationBox.className = 'quality-box muted';
       recommendationBox.textContent = 'No project root selected yet.';
       return null;
@@ -1738,11 +2058,13 @@ function renderHtml() {
     const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/recommendation');
     const data = await res.json();
     if (!res.ok) {
+      currentRecommendation = null;
       recommendationBox.className = 'quality-box bad';
       recommendationBox.textContent = data.error || 'Recommendation failed';
       return null;
     }
     const rec = data.recommendation || {};
+    currentRecommendation = rec;
     if (!rec.recommended) {
       recommendationBox.className = 'quality-box muted';
       recommendationBox.textContent = rec.reason || 'No recommendation available.';
@@ -1752,6 +2074,8 @@ function renderHtml() {
       'Recommended: v' + rec.recommended.version + ' · ' + rec.recommended.id,
       'Output: ' + rec.recommended.outputName,
       'Composite: ' + rec.recommended.composite,
+      'Confidence: ' + (rec.recommended.confidence == null ? 'n/a' : rec.recommended.confidence),
+      'Learning outcomes: ' + (((rec.learning && rec.learning.totalOutcomes) || 0)),
       'Why: ' + (rec.reason || ''),
     ];
     if (Array.isArray(rec.recommended.rationale) && rec.recommended.rationale.length > 0) {
@@ -1793,6 +2117,31 @@ function renderHtml() {
     return data;
   }
 
+  async function promoteWinner() {
+    if (!currentRootOutputName) {
+      setStatus('No project root selected', 'bad');
+      return null;
+    }
+    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/promote', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({})
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('Promote winner failed', 'bad');
+      setOutput(data);
+      return null;
+    }
+    renderVersionsList(data.versions || []);
+    if (data.promoted && data.promoted.id) {
+      metaTarget.value = data.promoted.id;
+      syncMetaForm();
+    }
+    setOutput(data);
+    return data;
+  }
+
   function versionById(id) {
     return currentVersions.find((item) => item.id === id) || null;
   }
@@ -1800,6 +2149,8 @@ function renderHtml() {
   function syncMetaForm() {
     const target = versionById(metaTarget.value);
     metaLabel.value = target && target.meta && target.meta.label ? target.meta.label : '';
+    metaOutcome.value = target && target.meta && target.meta.outcome ? target.meta.outcome : '';
+    metaOutcomeNote.value = target && target.meta && target.meta.outcomeNote ? target.meta.outcomeNote : '';
   }
 
   async function runCompare() {
@@ -1999,6 +2350,7 @@ function renderHtml() {
 
     currentId = data.id;
     currentScript = null;
+    currentRecommendation = null;
     setCurrentRoot(data.rootOutputName || '');
     currentJobIdField.value = currentId;
     domainPackField.value = '';
@@ -2094,6 +2446,14 @@ function renderHtml() {
     await fetchRecommendation();
   });
 
+  document.getElementById('promoteWinner').addEventListener('click', async () => {
+    await refreshVersions();
+    const result = await promoteWinner();
+    if (!result) return;
+    setStatus('Promoted winner: v' + result.promoted.version + ' · ' + result.promoted.id, 'ok');
+    await fetchRecommendation();
+  });
+
   document.getElementById('saveLabel').addEventListener('click', async () => {
     const jobId = String(metaTarget.value || '').trim();
     if (!jobId) {
@@ -2102,6 +2462,19 @@ function renderHtml() {
     }
     await updateVersionMeta('set-label', {jobId, label: String(metaLabel.value || '').trim()});
     setStatus('Label saved', 'ok');
+    await fetchRecommendation();
+  });
+
+  document.getElementById('saveOutcome').addEventListener('click', async () => {
+    const jobId = String(metaTarget.value || '').trim();
+    if (!jobId) {
+      setStatus('Choose a version first', 'bad');
+      return;
+    }
+    const outcome = String(metaOutcome.value || '').trim();
+    const outcomeNote = String(metaOutcomeNote.value || '').trim();
+    await updateVersionMeta('set-outcome', {jobId, outcome, outcomeNote});
+    setStatus(outcome ? ('Outcome set to ' + outcome) : 'Outcome cleared', 'ok');
     await fetchRecommendation();
   });
 

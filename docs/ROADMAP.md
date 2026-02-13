@@ -138,7 +138,9 @@ Scope:
     - structured editor + quality guard are implemented in local runner.
     - versioned rerenders + compare UX are implemented in local runner.
     - best-version recommendation and version lifecycle controls are implemented in local runner.
-    - next priority is recommendation confidence tuning against customer acceptance outcomes.
+    - recommendation confidence is now tuned against accepted/rejected outcomes.
+    - promote-winner workflow is now implemented for one-click publish-default selection.
+    - next priority is section-level auto-improvement recommendations (which section to regenerate first).
 
 ## 5) Non-Negotiable Prioritization Rules
 

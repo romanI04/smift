@@ -424,3 +424,34 @@
     - recommendation endpoint returns ranked output.
     - pin override is honored by recommendation.
     - compare endpoint remains functional after metadata updates.
+
+### M28 - Outcome-Learned Recommendation + Promote Winner Flow
+
+- Extended version metadata with explicit customer-style outcome feedback:
+  - `set-outcome` action on `POST /api/projects/:rootOutputName/version-meta`
+  - outcome states: `accepted`, `rejected`, or empty (clear)
+  - optional `outcomeNote` and timestamp tracking (`outcomeAt`).
+- Added recommendation learning loop:
+  - recommendation scoring now incorporates historical accepted/rejected outcomes.
+  - historical lift is applied at three levels:
+    - pack+template pair
+    - pack-only
+    - template-only
+  - recommendation response now includes confidence and total outcome evidence count.
+- Added publish-default action:
+  - new endpoint `POST /api/projects/:rootOutputName/promote`
+  - promotes winner by pinning selected/recommended version.
+  - enforces completed + rendered-video requirement before promotion.
+  - stamps `promotedAt` and defaults label to `publish-candidate` if empty.
+- Updated local runner UX:
+  - added outcome controls (`accepted` / `rejected` + note).
+  - added one-click `Promote Winner` button.
+  - recommendation panel now displays confidence and outcome evidence count.
+  - version tags now show `outcome` and `promoted` state.
+- Validation:
+  - `npx tsc --noEmit` pass.
+  - `npm run check:vision` pass.
+  - local API smoke:
+    - `set-outcome` updates metadata successfully.
+    - `promote` pins the winner and returns promoted version metadata.
+    - recommendation returns confidence and updated learning outcome count.

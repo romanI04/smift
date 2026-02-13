@@ -2,6 +2,20 @@
 
 ## 2026-02-13
 
+### M39 - Product Mode Default (No Credential Input)
+
+- Changed runner default to product mode:
+  - URL -> video flow no longer requires auth token or billing actions.
+  - auth/billing panel is hidden by default in UI.
+- Added optional auth gate toggle:
+  - set `SMIFT_REQUIRE_AUTH=true` to re-enable credential-gated mode.
+- In product mode:
+  - job/project endpoints are open for local operator workflow.
+  - render/rerender/auto-rerender credit charging is skipped.
+- Validation:
+  - `npx tsc --noEmit` pass
+  - local API smoke: unauthenticated `POST /api/jobs` + `GET /api/jobs/:id` returns `200`.
+
 ### M38 - Launch Snapshot + Demo/GTM Pack
 
 - Added business-facing launch snapshot:

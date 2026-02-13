@@ -190,6 +190,7 @@ const jobsDir = path.join(outDir, 'jobs');
 const DEFAULT_AUTO_PROMOTE_MIN_CONFIDENCE = 0.75;
 const CORE_ICP_PACK_IDS = new Set<DomainPackId>(['devtools', 'b2b-saas', 'ecommerce-retail']);
 const commerce = new CommerceStore(outDir);
+const REQUIRE_AUTH = process.env.SMIFT_REQUIRE_AUTH === 'true';
 if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, {recursive: true});
 if (!fs.existsSync(jobsDir)) fs.mkdirSync(jobsDir, {recursive: true});
 
@@ -208,7 +209,30 @@ function authenticateRequest(req: http.IncomingMessage) {
   return commerce.authenticate(token);
 }
 
+const PUBLIC_USER: CommercePublicUser = {
+  id: 'public',
+  email: 'public@local',
+  createdAt: new Date(0).toISOString(),
+  updatedAt: new Date(0).toISOString(),
+  plan: 'starter',
+  credits: Number.MAX_SAFE_INTEGER,
+};
+
+function requireUser(req: http.IncomingMessage):
+  | {ok: true; user: CommercePublicUser}
+  | {ok: false; code: number; error: string} {
+  if (!REQUIRE_AUTH) {
+    return {ok: true, user: PUBLIC_USER};
+  }
+  const auth = authenticateRequest(req);
+  if (!auth.ok || !auth.user) {
+    return {ok: false, code: auth.code, error: auth.error || 'unauthorized'};
+  }
+  return {ok: true, user: auth.user};
+}
+
 function canAccessJob(user: CommercePublicUser, job: JobRecord): boolean {
+  if (!REQUIRE_AUTH) return true;
   const owner = job.options.ownerUserId;
   if (!owner) return false;
   return owner === user.id;
@@ -277,53 +301,66 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'GET' && url.pathname === '/api/auth/me') {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
-      return sendJson(res, 200, {user: auth.user});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
+      return sendJson(res, 200, {user: actor.user});
     }
 
     if (method === 'GET' && url.pathname === '/api/billing/summary') {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
-      const summary = commerce.getBillingSummary(auth.user.id);
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
+      if (!REQUIRE_AUTH) {
+        return sendJson(res, 200, {
+          user: actor.user,
+          pricing: {
+            starter: {monthlyUsd: 39, includedCredits: 20},
+            growth: {monthlyUsd: 99, includedCredits: 80},
+            topup: {usd: 15, credits: 10},
+          },
+          recentLedger: [],
+        });
+      }
+      const summary = commerce.getBillingSummary(actor.user.id);
       if (!summary) return sendJson(res, 404, {error: 'billing account not found'});
       return sendJson(res, 200, summary);
     }
 
     if (method === 'POST' && url.pathname === '/api/billing/topup') {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      if (!REQUIRE_AUTH) return sendJson(res, 409, {error: 'billing disabled in product mode'});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const payload = await readJsonBody(req);
       const result = commerce.addTopupCredits(
-        auth.user.id,
+        actor.user.id,
         Number(payload.credits || 0),
         String(payload.reason || 'manual topup'),
       );
       if (!result.ok) return sendJson(res, result.code, {error: result.error});
-      const summary = commerce.getBillingSummary(auth.user.id);
+      const summary = commerce.getBillingSummary(actor.user.id);
       return sendJson(res, 200, summary);
     }
 
     if (method === 'POST' && url.pathname === '/api/billing/plan') {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      if (!REQUIRE_AUTH) return sendJson(res, 409, {error: 'billing disabled in product mode'});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const payload = await readJsonBody(req);
-      const result = commerce.setPlan(auth.user.id, String(payload.plan || 'starter'));
+      const result = commerce.setPlan(actor.user.id, String(payload.plan || 'starter'));
       if (!result.ok) return sendJson(res, result.code, {error: result.error});
-      const summary = commerce.getBillingSummary(auth.user.id);
+      const summary = commerce.getBillingSummary(actor.user.id);
       return sendJson(res, 200, summary);
     }
 
     if (method === 'POST' && url.pathname === '/api/jobs') {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const payload = await readJsonBody(req);
       const submittedUrl = String(payload.url || '').trim();
       if (!submittedUrl) return sendJson(res, 400, {error: 'url is required'});
 
       const renderWillRun = payload.skipRender === undefined ? false : Boolean(payload.skipRender) === false;
-      if (renderWillRun) {
-        const charge = commerce.chargeCredits(auth.user.id, 1, 'url-to-video generation render', {
+      if (REQUIRE_AUTH && renderWillRun) {
+        const charge = commerce.chargeCredits(actor.user.id, 1, 'url-to-video generation render', {
           submittedUrl,
           mode: 'generate',
         });
@@ -332,7 +369,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
 
-      const job = createJob(submittedUrl, payload, auth.user.id);
+      const job = createJob(submittedUrl, payload, actor.user.id);
       jobs.set(job.id, job);
       queue.push(job.id);
       persistJob(job);
@@ -345,18 +382,18 @@ const server = http.createServer(async (req, res) => {
         outputName: job.outputName,
         rootOutputName: job.options.rootOutputName,
         version: job.options.version,
-        billing: commerce.getBillingSummary(auth.user.id)?.user ?? null,
+        billing: REQUIRE_AUTH ? (commerce.getBillingSummary(actor.user.id)?.user ?? null) : null,
       });
     }
 
     if (method === 'POST' && /^\/api\/jobs\/[^/]+\/regenerate$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const id = parts[2];
       const job = jobs.get(id);
       if (!job) return sendJson(res, 404, {error: 'job not found'});
-      if (!canAccessJob(auth.user, job)) {
+      if (!canAccessJob(actor.user, job)) {
         return sendJson(res, 403, {error: 'forbidden: job does not belong to current user'});
       }
       if (job.status === 'running' || activeJobId === id) {
@@ -497,13 +534,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'POST' && /^\/api\/jobs\/[^/]+\/auto-improve$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const id = parts[2];
       const job = jobs.get(id);
       if (!job) return sendJson(res, 404, {error: 'job not found'});
-      if (!canAccessJob(auth.user, job)) {
+      if (!canAccessJob(actor.user, job)) {
         return sendJson(res, 403, {error: 'forbidden: job does not belong to current user'});
       }
       if (job.status === 'running' || activeJobId === id) {
@@ -514,7 +551,7 @@ const server = http.createServer(async (req, res) => {
       const segment = inferPromotionSegmentForJob(job);
       const defaultMinConfidence = effectiveMinConfidenceForSegment(policy, segment);
       const config = resolveAutoImproveConfig(payload, job.options.strict, defaultMinConfidence, segment);
-      const result = await runAutoImproveLoop(job, config, auth.user.id);
+      const result = await runAutoImproveLoop(job, config, actor.user.id);
       if (!result.ok) {
         return sendJson(res, result.code, {error: result.error});
       }
@@ -522,13 +559,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'GET' && /^\/api\/jobs\/[^/]+\/script$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const id = parts[2];
       const job = jobs.get(id);
       if (!job) return sendJson(res, 404, {error: 'job not found'});
-      if (!canAccessJob(auth.user, job)) {
+      if (!canAccessJob(actor.user, job)) {
         return sendJson(res, 403, {error: 'forbidden: job does not belong to current user'});
       }
       const artifacts = artifactsFor(job);
@@ -544,13 +581,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'PUT' && /^\/api\/jobs\/[^/]+\/script$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const id = parts[2];
       const job = jobs.get(id);
       if (!job) return sendJson(res, 404, {error: 'job not found'});
-      if (!canAccessJob(auth.user, job)) {
+      if (!canAccessJob(actor.user, job)) {
         return sendJson(res, 403, {error: 'forbidden: job does not belong to current user'});
       }
       if (job.status === 'running' || activeJobId === id) {
@@ -603,13 +640,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'POST' && /^\/api\/jobs\/[^/]+\/validate-script$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const id = parts[2];
       const job = jobs.get(id);
       if (!job) return sendJson(res, 404, {error: 'job not found'});
-      if (!canAccessJob(auth.user, job)) {
+      if (!canAccessJob(actor.user, job)) {
         return sendJson(res, 403, {error: 'forbidden: job does not belong to current user'});
       }
       if (job.status === 'running' || activeJobId === id) {
@@ -713,13 +750,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'POST' && /^\/api\/jobs\/[^/]+\/rerender$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const id = parts[2];
       const job = jobs.get(id);
       if (!job) return sendJson(res, 404, {error: 'job not found'});
-      if (!canAccessJob(auth.user, job)) {
+      if (!canAccessJob(actor.user, job)) {
         return sendJson(res, 403, {error: 'forbidden: job does not belong to current user'});
       }
       if (job.status === 'running' || activeJobId === id) {
@@ -751,11 +788,13 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
-      const charge = commerce.chargeCredits(auth.user.id, 1, 'rerender', {
-        sourceJobId: job.id,
-      });
-      if (!charge.ok) {
-        return sendJson(res, charge.code, {error: charge.error});
+      if (REQUIRE_AUTH) {
+        const charge = commerce.chargeCredits(actor.user.id, 1, 'rerender', {
+          sourceJobId: job.id,
+        });
+        if (!charge.ok) {
+          return sendJson(res, charge.code, {error: charge.error});
+        }
       }
 
       const queued = queueVersionedRerenderFromScript({
@@ -776,18 +815,18 @@ const server = http.createServer(async (req, res) => {
         outputName: queued.outputName,
         rootOutputName: queued.rootOutputName,
         version: queued.version,
-        billing: commerce.getBillingSummary(auth.user.id)?.user ?? null,
+        billing: REQUIRE_AUTH ? (commerce.getBillingSummary(actor.user.id)?.user ?? null) : null,
       });
     }
 
     if (method === 'GET' && /^\/api\/projects\/[^/]+\/versions$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const rootOutputName = decodeURIComponent(parts[2] || '');
       if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
       if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
-      if (!canAccessProjectRoot(auth.user, rootOutputName)) {
+      if (!canAccessProjectRoot(actor.user, rootOutputName)) {
         return sendJson(res, 403, {error: 'forbidden: project does not belong to current user'});
       }
       const policy = readProjectAutoPromotePolicy(rootOutputName);
@@ -799,13 +838,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'GET' && /^\/api\/projects\/[^/]+\/recommendation$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const rootOutputName = decodeURIComponent(parts[2] || '');
       if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
       if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
-      if (!canAccessProjectRoot(auth.user, rootOutputName)) {
+      if (!canAccessProjectRoot(actor.user, rootOutputName)) {
         return sendJson(res, 403, {error: 'forbidden: project does not belong to current user'});
       }
       const recommendation = recommendProjectVersion(rootOutputName);
@@ -816,13 +855,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'GET' && /^\/api\/projects\/[^/]+\/audit$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const rootOutputName = decodeURIComponent(parts[2] || '');
       if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
       if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
-      if (!canAccessProjectRoot(auth.user, rootOutputName)) {
+      if (!canAccessProjectRoot(actor.user, rootOutputName)) {
         return sendJson(res, 403, {error: 'forbidden: project does not belong to current user'});
       }
       const rawLimit = Number(url.searchParams.get('limit') || 50);
@@ -836,13 +875,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'GET' && /^\/api\/projects\/[^/]+\/promotion-policy$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const rootOutputName = decodeURIComponent(parts[2] || '');
       if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
       if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
-      if (!canAccessProjectRoot(auth.user, rootOutputName)) {
+      if (!canAccessProjectRoot(actor.user, rootOutputName)) {
         return sendJson(res, 403, {error: 'forbidden: project does not belong to current user'});
       }
       const policy = readProjectAutoPromotePolicy(rootOutputName);
@@ -854,13 +893,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'POST' && /^\/api\/projects\/[^/]+\/promotion-policy$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const rootOutputName = decodeURIComponent(parts[2] || '');
       if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
       if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
-      if (!canAccessProjectRoot(auth.user, rootOutputName)) {
+      if (!canAccessProjectRoot(actor.user, rootOutputName)) {
         return sendJson(res, 403, {error: 'forbidden: project does not belong to current user'});
       }
       const payload = await readJsonBody(req);
@@ -898,13 +937,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'POST' && /^\/api\/projects\/[^/]+\/promotion-policy\/calibrate$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const rootOutputName = decodeURIComponent(parts[2] || '');
       if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
       if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
-      if (!canAccessProjectRoot(auth.user, rootOutputName)) {
+      if (!canAccessProjectRoot(actor.user, rootOutputName)) {
         return sendJson(res, 403, {error: 'forbidden: project does not belong to current user'});
       }
       const payload = await readJsonBody(req);
@@ -969,13 +1008,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'POST' && /^\/api\/projects\/[^/]+\/promote$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const rootOutputName = decodeURIComponent(parts[2] || '');
       if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
       if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
-      if (!canAccessProjectRoot(auth.user, rootOutputName)) {
+      if (!canAccessProjectRoot(actor.user, rootOutputName)) {
         return sendJson(res, 403, {error: 'forbidden: project does not belong to current user'});
       }
       const payload = await readJsonBody(req);
@@ -994,13 +1033,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'POST' && /^\/api\/projects\/[^/]+\/version-meta$/.test(url.pathname)) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const rootOutputName = decodeURIComponent(parts[2] || '');
       if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
       if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
-      if (!canAccessProjectRoot(auth.user, rootOutputName)) {
+      if (!canAccessProjectRoot(actor.user, rootOutputName)) {
         return sendJson(res, 403, {error: 'forbidden: project does not belong to current user'});
       }
       const payload = await readJsonBody(req);
@@ -1016,7 +1055,7 @@ const server = http.createServer(async (req, res) => {
       if (getRootOutputName(job) !== rootOutputName) {
         return sendJson(res, 400, {error: 'job does not belong to this project root'});
       }
-      if (!canAccessJob(auth.user, job)) {
+      if (!canAccessJob(actor.user, job)) {
         return sendJson(res, 403, {error: 'forbidden: job does not belong to current user'});
       }
 
@@ -1073,13 +1112,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'GET' && url.pathname.startsWith('/api/jobs/')) {
-      const auth = authenticateRequest(req);
-      if (!auth.ok || !auth.user) return sendJson(res, auth.code, {error: auth.error});
+      const actor = requireUser(req);
+      if (!actor.ok) return sendJson(res, actor.code, {error: actor.error});
       const parts = url.pathname.split('/').filter(Boolean);
       const id = parts[2];
       const job = jobs.get(id);
       if (!job) return sendJson(res, 404, {error: 'job not found'});
-      if (!canAccessJob(auth.user, job)) {
+      if (!canAccessJob(actor.user, job)) {
         return sendJson(res, 403, {error: 'forbidden: job does not belong to current user'});
       }
 
@@ -1116,7 +1155,7 @@ const server = http.createServer(async (req, res) => {
         if (!otherId) return sendJson(res, 400, {error: 'other job id is required'});
         const otherJob = jobs.get(otherId);
         if (!otherJob) return sendJson(res, 404, {error: 'other job not found'});
-        if (!canAccessJob(auth.user, otherJob)) {
+        if (!canAccessJob(actor.user, otherJob)) {
           return sendJson(res, 403, {error: 'forbidden: comparison target does not belong to current user'});
         }
         return sendJson(res, 200, compareJobs(job, otherJob));
@@ -1649,11 +1688,13 @@ async function runAutoImproveLoop(
 
   const goalMet = meetsAutoImproveGoal(qualityReport, config);
   if (config.autoRerender && goalMet) {
-    const charge = commerce.chargeCredits(actorUserId, 1, 'auto-improve rerender', {
-      sourceJobId: job.id,
-    });
-    if (!charge.ok) {
-      return {ok: false, code: charge.code, error: charge.error || 'insufficient credits'};
+    if (REQUIRE_AUTH) {
+      const charge = commerce.chargeCredits(actorUserId, 1, 'auto-improve rerender', {
+        sourceJobId: job.id,
+      });
+      if (!charge.ok) {
+        return {ok: false, code: charge.code, error: charge.error || 'insufficient credits'};
+      }
     }
     const queued = queueVersionedRerenderFromScript({
       job,
@@ -3103,6 +3144,7 @@ function renderHtml() {
   const packOptions = ['auto', ...DOMAIN_PACK_IDS]
     .map((id) => `<option value="${id}">${id}</option>`)
     .join('');
+  const authPanelCss = REQUIRE_AUTH ? '' : '#authBox { display:none; }';
 
   return `<!doctype html>
 <html>
@@ -3146,6 +3188,7 @@ function renderHtml() {
     .video-card { border:1px solid #e5e7eb; border-radius:10px; padding:8px; background:#fcfcfc; }
     .video-card video { width:100%; border-radius:8px; background:#000; min-height: 140px; }
     .stack { display:flex; flex-direction: column; gap: 10px; }
+    ${authPanelCss}
     @media (max-width: 900px) {
       .split { grid-template-columns: 1fr; }
       .editor-grid { grid-template-columns: 1fr; }
@@ -3157,7 +3200,7 @@ function renderHtml() {
   <div class="wrap">
     <div class="card">
       <h1>smift self-serve runner</h1>
-      <p class="muted">URL -> script -> structured edits -> quality guard -> rerender.</p>
+      <p class="muted">URL -> video with voice (plus optional quality/edit controls).</p>
       <div class="quality-box" id="authBox">
         <strong>Auth + Billing</strong>
         <div class="row" style="margin-top:8px">
@@ -3401,6 +3444,7 @@ function renderHtml() {
   let currentRecommendation = null;
   let currentFixPlan = null;
   let currentPromotionPolicy = null;
+  const authEnabled = ${REQUIRE_AUTH ? 'true' : 'false'};
   let authToken = localStorage.getItem('smiftAuthToken') || '';
   let authUser = null;
 
@@ -3449,6 +3493,11 @@ function renderHtml() {
   }
 
   async function refreshAuthAndBilling() {
+    if (!authEnabled) {
+      authUser = null;
+      renderBillingSummary(null);
+      return null;
+    }
     if (!authToken) {
       authUser = null;
       renderBillingSummary(null);

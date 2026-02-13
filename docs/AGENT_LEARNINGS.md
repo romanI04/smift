@@ -70,6 +70,7 @@
 - If auto-rerender is enabled, auto-improve can switch active work to a new versioned rerender job immediately after reaching thresholds.
 - Auto-promote does not bypass ranking/pin logic; it only executes when the rerendered version is the current recommendation winner.
 - Startup/watchdog pass now evaluates any pending auto-promote rerenders not finalized in prior runs and writes audit entries.
+- Product mode should stay URL-first with no credential prompts in runner UI by default. Use `SMIFT_REQUIRE_AUTH=true` only when explicitly validating gated billing/auth behavior.
 
 ## Domain Pack System
 

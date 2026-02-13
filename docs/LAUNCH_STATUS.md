@@ -6,11 +6,15 @@ Smift is an avatar-less, artifact-first URL-to-video engine for startup-style pr
 
 ## What A Customer Can Do Now
 
-- Sign up and log in.
 - Get starter/growth plan state and credit balance.
 - Generate from URL (script-only or full render).
 - Edit script sections (hook, features, CTA), run quality checks, and rerender.
 - Compare multiple versions, get best-version recommendation, and promote a winner.
+
+Product mode default:
+- No credential entry required in runner UI.
+- User can go directly from URL -> video workflow.
+- Auth/billing mode is optional and can be enabled for gated deployments.
 
 ## What Is Still Not Ready For Public Paid Launch
 

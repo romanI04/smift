@@ -116,8 +116,9 @@ Scope:
   - Step 3: blocked-page fixtures + scraper eval runner.
   - Step 4: first-5-second hook grounding improvements.
   - Step 5: hook quality rubric and scoring penalties.
+  - Step 6: script section regeneration API.
 - Next up:
-  - Step 6: implement script section regeneration API.
+  - Step 7: minimal script edit UI flow.
 
 ## 5) Non-Negotiable Prioritization Rules
 

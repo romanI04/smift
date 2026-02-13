@@ -273,3 +273,21 @@
 - Validation:
   - `npm run eval:scraper`: `100%` (`5/5`)
   - `npm run eval:real:smoke`: `100%` pack accuracy (`10/10`), `100%` pass rate (`10/10`).
+
+### M21 - Section Regeneration API (Roadmap Day 6)
+
+- Added section regeneration engine module:
+  - `src/pipeline/section-regenerate.ts`
+  - supports targeted regeneration for `hook`, `feature1`, `feature2`, `feature3`, `cta`.
+- Added server endpoint:
+  - `POST /api/jobs/:id/regenerate`
+  - rewrites selected section from existing artifacts + fresh scrape grounding.
+  - re-scores quality and persists updated script/quality artifacts in place.
+- Added basic UI controls in local runner for section regeneration.
+- Validation:
+  - manual E2E check on local server:
+    - create job
+    - regenerate `hook` and `feature2`
+    - verify updated quality file and generation mode (`section-regenerate:*`).
+  - `npm run eval:scraper`: `100%` (`5/5`)
+  - `npm run eval:real:smoke`: `100%` pack accuracy (`10/10`), `100%` pass rate (`10/10`).

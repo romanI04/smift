@@ -2,7 +2,19 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import {spawn} from 'child_process';
-import {DOMAIN_PACK_IDS, type DomainPackId} from '../pipeline/domain-packs';
+import {
+  DOMAIN_PACK_IDS,
+  getDomainPack,
+  selectDomainPack,
+  type DomainPackId,
+} from '../pipeline/domain-packs';
+import {scrapeUrl} from '../pipeline/scraper';
+import {extractGroundingHints, summarizeGroundingUsage} from '../pipeline/grounding';
+import {selectTemplate, getTemplateProfile, type TemplateId} from '../pipeline/templates';
+import {scoreScriptQuality} from '../pipeline/quality';
+import {autoFixScriptQuality} from '../pipeline/autofix';
+import {regenerateScriptSection, type RegenerateSection} from '../pipeline/section-regenerate';
+import type {ScriptResult} from '../pipeline/script-types';
 
 type JobStatus = 'queued' | 'running' | 'completed' | 'failed';
 
@@ -35,6 +47,7 @@ if (!fs.existsSync(jobsDir)) fs.mkdirSync(jobsDir, {recursive: true});
 const jobs = new Map<string, JobRecord>();
 const queue: string[] = [];
 let activeJobId: string | null = null;
+const REGENERATE_SECTIONS: RegenerateSection[] = ['hook', 'feature1', 'feature2', 'feature3', 'cta'];
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -69,6 +82,148 @@ const server = http.createServer(async (req, res) => {
         id: job.id,
         status: job.status,
         url: job.url,
+      });
+    }
+
+    if (method === 'POST' && /^\/api\/jobs\/[^/]+\/regenerate$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const id = parts[2];
+      const job = jobs.get(id);
+      if (!job) return sendJson(res, 404, {error: 'job not found'});
+      if (job.status === 'running' || activeJobId === id) {
+        return sendJson(res, 409, {error: 'job is running; wait until completion'});
+      }
+
+      const payload = await readJsonBody(req);
+      const section = String(payload.section || '').trim() as RegenerateSection;
+      if (!REGENERATE_SECTIONS.includes(section)) {
+        return sendJson(res, 400, {error: `section is required and must be one of: ${REGENERATE_SECTIONS.join(', ')}`});
+      }
+
+      const artifacts = artifactsFor(job);
+      if (!artifacts.scriptPath) {
+        return sendJson(res, 400, {error: 'script artifact missing; run job first'});
+      }
+
+      const existingScriptRaw = JSON.parse(fs.readFileSync(artifacts.scriptPath, 'utf-8')) as ScriptResult & {narration?: string};
+      const existingScript: ScriptResult = {
+        ...existingScriptRaw,
+        narrationSegments: Array.isArray(existingScriptRaw.narrationSegments) ? existingScriptRaw.narrationSegments : [],
+      };
+
+      const existingQuality = artifacts.qualityPath
+        ? safeReadJson(artifacts.qualityPath)
+        : null;
+
+      const scraped = await scrapeUrl(job.url);
+      const packFromArtifacts = String(existingScript.domainPackId || existingQuality?.domainPack || '').trim();
+      const selectedPackId = (DOMAIN_PACK_IDS.includes(packFromArtifacts as DomainPackId)
+        ? packFromArtifacts
+        : (job.options.pack === 'auto' ? null : job.options.pack)) as DomainPackId | null;
+      const packSelection = selectedPackId
+        ? {
+          pack: getDomainPack(selectedPackId),
+          reason: `Preserved existing pack ${selectedPackId}`,
+          confidence: 1,
+          scores: existingQuality?.domainPackScores ?? {},
+          topCandidates: existingQuality?.domainPackTopCandidates ?? [],
+        }
+        : selectDomainPack(scraped, 'auto');
+      const domainPack = packSelection.pack;
+
+      const templateFromArtifacts = String(existingQuality?.template || '').trim() as TemplateId;
+      const templateProfile = ['yc-saas', 'product-demo', 'founder-story'].includes(templateFromArtifacts)
+        ? getTemplateProfile(templateFromArtifacts)
+        : selectTemplate(scraped, 'auto', domainPack.id).profile;
+
+      const groundingHints = extractGroundingHints(scraped);
+      const regenerated = regenerateScriptSection({
+        script: existingScript,
+        section,
+        scraped,
+        domainPack,
+        groundingHints,
+      });
+
+      let nextScript = regenerated.script;
+      let qualityReport = scoreScriptQuality({
+        script: nextScript,
+        scraped,
+        template: templateProfile,
+        domainPack,
+        groundingHints,
+        minScore: 80,
+        maxWarnings: job.options.strict ? 0 : 3,
+        failOnWarnings: job.options.strict,
+      });
+      const actions = [...regenerated.actions];
+      let generationMode = `section-regenerate:${section}`;
+      if (!qualityReport.passed) {
+        const fixed = autoFixScriptQuality(nextScript, scraped, domainPack, groundingHints);
+        nextScript = fixed.script;
+        if (fixed.actions.length > 0) {
+          actions.push(...fixed.actions.map((item) => `autofix: ${item}`));
+        }
+        qualityReport = scoreScriptQuality({
+          script: nextScript,
+          scraped,
+          template: templateProfile,
+          domainPack,
+          groundingHints,
+          minScore: 80,
+          maxWarnings: job.options.strict ? 0 : 3,
+          failOnWarnings: job.options.strict,
+        });
+        generationMode = `${generationMode}+autofix`;
+      }
+
+      fs.writeFileSync(
+        artifacts.scriptPath,
+        JSON.stringify({...nextScript, narration: nextScript.narrationSegments.join(' ')}, null, 2),
+      );
+
+      if (artifacts.qualityPath) {
+        fs.writeFileSync(
+          artifacts.qualityPath,
+          JSON.stringify(
+            {
+              generatedAt: new Date().toISOString(),
+              url: job.url,
+              template: templateProfile.id,
+              templateReason: `Regenerated ${section} section`,
+              domainPack: domainPack.id,
+              domainPackReason: packSelection.reason,
+              domainPackConfidence: packSelection.confidence,
+              domainPackTopCandidates: packSelection.topCandidates,
+              domainPackScores: packSelection.scores,
+              grounding: summarizeGroundingUsage(nextScript, groundingHints),
+              relevanceGuard: {
+                enabled: false,
+                applied: false,
+                actions: [],
+                warnings: [],
+              },
+              generationMode,
+              regeneratedSection: section,
+              regenerationActions: actions,
+              qualityReport,
+            },
+            null,
+            2,
+          ),
+        );
+      }
+
+      appendLog(job, `[regen] ${section}: ${actions.join(' | ')}`);
+      persistJob(job);
+
+      return sendJson(res, 200, {
+        id: job.id,
+        section,
+        generationMode,
+        quality: qualitySummaryFor(job),
+        artifacts: artifactsFor(job),
+        actions,
       });
     }
 
@@ -283,6 +438,14 @@ function appendLog(job: JobRecord, text: string) {
   persistJob(job);
 }
 
+function safeReadJson(filePath: string): any | null {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
 function sendJson(res: http.ServerResponse, code: number, body: unknown) {
   res.statusCode = code;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -345,6 +508,16 @@ function renderHtml() {
         <select id="skipRender"><option value="true">script-only</option><option value="false">render-video</option></select>
         <button id="submit">Run</button>
       </div>
+      <div class="row">
+        <select id="section">
+          <option value="hook">hook</option>
+          <option value="feature1">feature1</option>
+          <option value="feature2">feature2</option>
+          <option value="feature3">feature3</option>
+          <option value="cta">cta</option>
+        </select>
+        <button id="regen">Regenerate Section</button>
+      </div>
       <div id="status" class="muted">Idle.</div>
       <pre id="out">No job yet.</pre>
     </div>
@@ -403,6 +576,28 @@ function renderHtml() {
     out.textContent = JSON.stringify(data, null, 2);
     if (timer) clearInterval(timer);
     timer = setInterval(poll, 2000);
+    poll();
+  });
+
+  document.getElementById('regen').addEventListener('click', async () => {
+    if (!currentId) {
+      setStatus('No active job selected', 'bad');
+      return;
+    }
+    const section = document.getElementById('section').value;
+    const res = await fetch('/api/jobs/' + currentId + '/regenerate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({section})
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('Regenerate failed', 'bad');
+      out.textContent = JSON.stringify(data, null, 2);
+      return;
+    }
+    setStatus('Section regenerated: ' + section, 'ok');
+    out.textContent = JSON.stringify(data, null, 2);
     poll();
   });
 </script>

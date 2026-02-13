@@ -29,6 +29,7 @@
 - API returns local artifact paths; downstream systems can upload them if needed.
 - Server now supports pack control (`payload.pack` / UI dropdown), forwarded to `generate --pack=...`.
 - Use `GET /api/jobs/:id/quality` (or `?view=quality`) for cheap status polling when full artifacts are unnecessary.
+- Use `POST /api/jobs/:id/regenerate` for targeted iteration (`hook`, `feature1..3`, `cta`) without re-running full workflow from scratch.
 
 ## Domain Pack System
 

@@ -27,6 +27,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `npm run eval:customer:core`: core paying-segment benchmark (primary GTM gate)
 - `npm run serve`: local self-serve queue + web UI (`http://localhost:3030`)
   - quality-only status view: `GET /api/jobs/:id/quality` (or `GET /api/jobs/:id?view=quality`)
+  - section regenerate API: `POST /api/jobs/:id/regenerate` with body `{ "section": "hook|feature1|feature2|feature3|cta" }`
 
 ## Useful Flags (`generate`)
 

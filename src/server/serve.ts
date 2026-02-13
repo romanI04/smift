@@ -3516,7 +3516,8 @@ function renderHtml() {
     function sanitizeUrl(input) {
       const raw = String(input || '').trim();
       if (!raw) return '';
-      if (/^https?:\/\//i.test(raw)) return raw;
+      const lower = raw.toLowerCase();
+      if (lower.startsWith('http://') || lower.startsWith('https://')) return raw;
       return 'https://' + raw;
     }
 
@@ -3525,7 +3526,7 @@ function renderHtml() {
         logBox.textContent = 'No log lines yet.';
         return;
       }
-      logBox.textContent = lines.slice(-25).join('\n');
+      logBox.textContent = lines.slice(-25).join('\\n');
       logBox.scrollTop = logBox.scrollHeight;
     }
 

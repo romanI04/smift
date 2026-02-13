@@ -38,6 +38,8 @@ interface JobRecord {
     voice: 'none' | 'openai' | 'elevenlabs' | 'chatterbox';
     skipRender: boolean;
     pack: 'auto' | DomainPackId;
+    rootOutputName: string;
+    version: number;
     scriptPath?: string;
     sourceJobId?: string;
   };
@@ -54,6 +56,7 @@ const jobs = new Map<string, JobRecord>();
 const queue: string[] = [];
 let activeJobId: string | null = null;
 const REGENERATE_SECTIONS: RegenerateSection[] = ['hook', 'feature1', 'feature2', 'feature3', 'cta'];
+loadPersistedJobs();
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -88,6 +91,9 @@ const server = http.createServer(async (req, res) => {
         id: job.id,
         status: job.status,
         url: job.url,
+        outputName: job.outputName,
+        rootOutputName: job.options.rootOutputName,
+        version: job.options.version,
       });
     }
 
@@ -424,6 +430,8 @@ const server = http.createServer(async (req, res) => {
       const script = normalizeScriptPayload(scriptRaw);
       const existingQuality = artifacts.qualityPath ? safeReadJson(artifacts.qualityPath) : null;
       const context = await resolveQualityContext(job, script, existingQuality);
+      const payload = await readJsonBody(req);
+      const strictForGuard = payload.strict === undefined ? job.options.strict : Boolean(payload.strict);
       const qualityReport = scoreScriptQuality({
         script,
         scraped: context.scraped,
@@ -431,8 +439,8 @@ const server = http.createServer(async (req, res) => {
         domainPack: context.domainPack,
         groundingHints: context.groundingHints,
         minScore: 80,
-        maxWarnings: job.options.strict ? 0 : 3,
-        failOnWarnings: job.options.strict,
+        maxWarnings: strictForGuard ? 0 : 3,
+        failOnWarnings: strictForGuard,
       });
       if (!qualityReport.passed) {
         return sendJson(res, 409, {
@@ -441,12 +449,58 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
-      const payload = await readJsonBody(req);
-      const rerenderJob = createRerenderJob(job, artifacts.scriptPath, payload);
+      const rootOutputName = getRootOutputName(job);
+      const version = nextVersionForRoot(rootOutputName);
+      const outputName = outputNameForVersion(rootOutputName, version);
+      const versionedScriptPath = path.join(outDir, `${outputName}-script.json`);
+      fs.writeFileSync(versionedScriptPath, JSON.stringify(toPersistedScript(script), null, 2));
+
+      const versionedQualityPath = path.join(outDir, `${outputName}-quality.json`);
+      fs.writeFileSync(
+        versionedQualityPath,
+        JSON.stringify(
+          {
+            generatedAt: new Date().toISOString(),
+            url: job.url,
+            template: context.templateProfile.id,
+            templateReason: context.templateReason,
+            domainPack: context.domainPack.id,
+            domainPackReason: context.packReason,
+            domainPackConfidence: context.packConfidence,
+            domainPackTopCandidates: context.packTopCandidates,
+            domainPackScores: context.packScores,
+            grounding: summarizeGroundingUsage(script, context.groundingHints),
+            relevanceGuard: {
+              enabled: false,
+              applied: false,
+              actions: [],
+              warnings: [],
+            },
+            generationMode: 'manual-edit-validation',
+            qualityReport,
+            versioning: {
+              rootOutputName,
+              version,
+              sourceJobId: job.id,
+            },
+          },
+          null,
+          2,
+        ),
+      );
+
+      const rerenderJob = createRerenderJob(
+        job,
+        versionedScriptPath,
+        payload,
+        outputName,
+        rootOutputName,
+        version,
+      );
       jobs.set(rerenderJob.id, rerenderJob);
       queue.push(rerenderJob.id);
       persistJob(rerenderJob);
-      appendLog(job, `[rerender] queued rerender job ${rerenderJob.id}`);
+      appendLog(job, `[rerender] queued rerender job ${rerenderJob.id} (${outputName})`);
       tickQueue();
 
       return sendJson(res, 201, {
@@ -454,6 +508,19 @@ const server = http.createServer(async (req, res) => {
         sourceJobId: job.id,
         status: rerenderJob.status,
         mode: rerenderJob.options.mode,
+        outputName,
+        rootOutputName,
+        version,
+      });
+    }
+
+    if (method === 'GET' && /^\/api\/projects\/[^/]+\/versions$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const rootOutputName = decodeURIComponent(parts[2] || '');
+      if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
+      return sendJson(res, 200, {
+        rootOutputName,
+        versions: listProjectVersions(rootOutputName),
       });
     }
 
@@ -477,6 +544,20 @@ const server = http.createServer(async (req, res) => {
       if (parts.length === 4 && parts[3] === 'quality') {
         return sendJson(res, 200, qualitySummaryFor(job));
       }
+
+      if (parts.length === 4 && parts[3] === 'video') {
+        const artifacts = artifactsFor(job);
+        if (!artifacts.videoPath) return sendJson(res, 404, {error: 'video artifact missing'});
+        return sendVideo(res, artifacts.videoPath);
+      }
+
+      if (parts.length === 4 && parts[3] === 'compare') {
+        const otherId = String(url.searchParams.get('other') || '').trim();
+        if (!otherId) return sendJson(res, 400, {error: 'other job id is required'});
+        const otherJob = jobs.get(otherId);
+        if (!otherJob) return sendJson(res, 404, {error: 'other job not found'});
+        return sendJson(res, 200, compareJobs(job, otherJob));
+      }
     }
 
     sendJson(res, 404, {error: 'not found'});
@@ -492,7 +573,8 @@ server.listen(port, () => {
 
 function createJob(url: string, payload: Record<string, unknown>): JobRecord {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const outputName = url.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-');
+  const rootOutputName = url.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-');
+  const outputName = rootOutputName;
   const strict = Boolean(payload.strict ?? false);
   const quality = payload.quality === 'yc' ? 'yc' : 'draft';
   const voice = (['none', 'openai', 'elevenlabs', 'chatterbox'].includes(String(payload.voice))
@@ -517,12 +599,21 @@ function createJob(url: string, payload: Record<string, unknown>): JobRecord {
       voice,
       skipRender,
       pack,
+      rootOutputName,
+      version: 1,
     },
     logs: [],
   };
 }
 
-function createRerenderJob(sourceJob: JobRecord, scriptPath: string, payload: Record<string, unknown>): JobRecord {
+function createRerenderJob(
+  sourceJob: JobRecord,
+  scriptPath: string,
+  payload: Record<string, unknown>,
+  outputName: string,
+  rootOutputName: string,
+  version: number,
+): JobRecord {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const quality = payload.quality === 'yc' ? 'yc' : sourceJob.options.quality;
   const voice = (['none', 'openai', 'elevenlabs', 'chatterbox'].includes(String(payload.voice))
@@ -535,7 +626,7 @@ function createRerenderJob(sourceJob: JobRecord, scriptPath: string, payload: Re
     url: sourceJob.url,
     status: 'queued',
     createdAt: new Date().toISOString(),
-    outputName: sourceJob.outputName,
+    outputName,
     options: {
       mode: 'rerender',
       strict,
@@ -543,11 +634,64 @@ function createRerenderJob(sourceJob: JobRecord, scriptPath: string, payload: Re
       voice,
       skipRender: false,
       pack: sourceJob.options.pack,
+      rootOutputName,
+      version,
       scriptPath,
       sourceJobId: sourceJob.id,
     },
     logs: [],
   };
+}
+
+function getRootOutputName(job: JobRecord): string {
+  return job.options.rootOutputName || parseVersionedOutputName(job.outputName).rootOutputName;
+}
+
+function getVersion(job: JobRecord): number {
+  return job.options.version || parseVersionedOutputName(job.outputName).version;
+}
+
+function parseVersionedOutputName(outputName: string): {rootOutputName: string; version: number} {
+  const match = outputName.match(/^(.*)-v(\d+)$/);
+  if (!match) {
+    return {rootOutputName: outputName, version: 1};
+  }
+  return {
+    rootOutputName: match[1],
+    version: Number(match[2]) || 1,
+  };
+}
+
+function outputNameForVersion(rootOutputName: string, version: number): string {
+  return version <= 1 ? rootOutputName : `${rootOutputName}-v${version}`;
+}
+
+function nextVersionForRoot(rootOutputName: string): number {
+  let maxVersion = 1;
+  for (const job of jobs.values()) {
+    if (getRootOutputName(job) !== rootOutputName) continue;
+    maxVersion = Math.max(maxVersion, getVersion(job));
+  }
+
+  const escapedRoot = rootOutputName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const versionedRegex = new RegExp(`^${escapedRoot}-v(\\d+)-job\\.json$`);
+  const baseRegex = new RegExp(`^${escapedRoot}-job\\.json$`);
+  try {
+    for (const name of fs.readdirSync(outDir)) {
+      const vMatch = name.match(versionedRegex);
+      if (vMatch) {
+        maxVersion = Math.max(maxVersion, Number(vMatch[1]) || 1);
+        continue;
+      }
+      if (baseRegex.test(name)) {
+        maxVersion = Math.max(maxVersion, 1);
+      }
+    }
+  } catch {
+    // ignore readdir failures
+  }
+
+  return maxVersion + 1;
 }
 
 interface QualityContext {
@@ -690,10 +834,14 @@ function artifactsFor(job: JobRecord) {
 }
 
 function enrichJob(job: JobRecord) {
+  const artifacts = artifactsFor(job);
   return {
     ...job,
+    rootOutputName: getRootOutputName(job),
+    version: getVersion(job),
     queuePosition: job.status === 'queued' ? queue.indexOf(job.id) + 1 : 0,
-    artifacts: artifactsFor(job),
+    artifacts,
+    videoUrl: artifacts.videoPath ? `/api/jobs/${job.id}/video` : null,
     quality: qualitySummaryFor(job),
   };
 }
@@ -741,6 +889,118 @@ function qualitySummaryFor(job: JobRecord) {
       error: 'quality file parse failed',
     };
   }
+}
+
+function listProjectVersions(rootOutputName: string) {
+  const items = [...jobs.values()]
+    .filter((job) => getRootOutputName(job) === rootOutputName)
+    .map((job) => {
+      const artifacts = artifactsFor(job);
+      return {
+        id: job.id,
+        outputName: job.outputName,
+        rootOutputName,
+        version: getVersion(job),
+        status: job.status,
+        mode: job.options.mode,
+        createdAt: job.createdAt,
+        finishedAt: job.finishedAt ?? null,
+        quality: qualitySummaryFor(job),
+        artifacts,
+        videoUrl: artifacts.videoPath ? `/api/jobs/${job.id}/video` : null,
+      };
+    })
+    .sort((a, b) => b.version - a.version || b.createdAt.localeCompare(a.createdAt));
+  return items;
+}
+
+function compareJobs(left: JobRecord, right: JobRecord) {
+  const leftArtifacts = artifactsFor(left);
+  const rightArtifacts = artifactsFor(right);
+  const leftQuality = qualitySummaryFor(left);
+  const rightQuality = qualitySummaryFor(right);
+  const leftScript = loadScriptFromArtifact(leftArtifacts.scriptPath);
+  const rightScript = loadScriptFromArtifact(rightArtifacts.scriptPath);
+
+  const leftFeatures = leftScript?.features?.map((feature) => feature.appName) ?? [];
+  const rightFeatures = rightScript?.features?.map((feature) => feature.appName) ?? [];
+  const leftIntegrations = new Set(leftScript?.integrations ?? []);
+  const rightIntegrations = new Set(rightScript?.integrations ?? []);
+  const sharedIntegrations = [...leftIntegrations].filter((item) => rightIntegrations.has(item));
+
+  return {
+    left: {
+      id: left.id,
+      outputName: left.outputName,
+      rootOutputName: getRootOutputName(left),
+      version: getVersion(left),
+      quality: leftQuality,
+      videoUrl: leftArtifacts.videoPath ? `/api/jobs/${left.id}/video` : null,
+    },
+    right: {
+      id: right.id,
+      outputName: right.outputName,
+      rootOutputName: getRootOutputName(right),
+      version: getVersion(right),
+      quality: rightQuality,
+      videoUrl: rightArtifacts.videoPath ? `/api/jobs/${right.id}/video` : null,
+    },
+    diff: {
+      scoreDelta: (rightQuality.score ?? 0) - (leftQuality.score ?? 0),
+      passTransition: `${String(leftQuality.passed)} -> ${String(rightQuality.passed)}`,
+      packTransition: `${leftQuality.domainPack ?? 'n/a'} -> ${rightQuality.domainPack ?? 'n/a'}`,
+      hookChanged: leftScript && rightScript
+        ? leftScript.hookLine1 !== rightScript.hookLine1
+          || leftScript.hookLine2 !== rightScript.hookLine2
+          || leftScript.hookKeyword !== rightScript.hookKeyword
+        : null,
+      ctaChanged: leftScript && rightScript ? leftScript.ctaUrl !== rightScript.ctaUrl : null,
+      featureNameChanges: compareLists(leftFeatures, rightFeatures),
+      narrationWordDelta: leftScript && rightScript
+        ? countWords(leftScript.narrationSegments.join(' ')) - countWords(rightScript.narrationSegments.join(' '))
+        : null,
+      sharedIntegrationsCount: sharedIntegrations.length,
+      sharedIntegrations: sharedIntegrations.slice(0, 12),
+    },
+  };
+}
+
+function compareLists(left: string[], right: string[]) {
+  const max = Math.max(left.length, right.length);
+  const changes: Array<{slot: number; from: string; to: string}> = [];
+  for (let i = 0; i < max; i++) {
+    const from = left[i] ?? '';
+    const to = right[i] ?? '';
+    if (from !== to) {
+      changes.push({slot: i + 1, from, to});
+    }
+  }
+  return changes;
+}
+
+function loadScriptFromArtifact(scriptPath: string | null): ScriptResult | null {
+  if (!scriptPath) return null;
+  const parsed = safeReadJson(scriptPath);
+  if (!parsed) return null;
+  try {
+    return normalizeScriptPayload(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function sendVideo(res: http.ServerResponse, videoPath: string) {
+  if (!fs.existsSync(videoPath)) {
+    return sendJson(res, 404, {error: 'video artifact missing'});
+  }
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Cache-Control', 'no-store');
+  fs.createReadStream(videoPath).pipe(res);
+}
+
+function countWords(value: string): number {
+  return value.trim().split(/\s+/).filter(Boolean).length;
 }
 
 function persistJob(job: JobRecord) {
@@ -792,6 +1052,37 @@ async function readJsonBody(req: http.IncomingMessage): Promise<Record<string, u
   return JSON.parse(raw) as Record<string, unknown>;
 }
 
+function loadPersistedJobs() {
+  try {
+    const files = fs.readdirSync(jobsDir).filter((name) => name.endsWith('.json'));
+    for (const file of files) {
+      const full = path.join(jobsDir, file);
+      const parsed = safeReadJson(full);
+      if (!parsed || typeof parsed !== 'object') continue;
+      const raw = parsed as JobRecord;
+      if (!raw.id || !raw.outputName || !raw.options) continue;
+      const rootOutputName = raw.options.rootOutputName || parseVersionedOutputName(raw.outputName).rootOutputName;
+      const version = raw.options.version || parseVersionedOutputName(raw.outputName).version;
+      const status = raw.status === 'running' || raw.status === 'queued' ? 'failed' : raw.status;
+      const recovered: JobRecord = {
+        ...raw,
+        status,
+        options: {
+          ...raw.options,
+          rootOutputName,
+          version,
+        },
+      };
+      if (status === 'failed' && !recovered.error && (raw.status === 'running' || raw.status === 'queued')) {
+        recovered.error = 'Recovered after server restart.';
+      }
+      jobs.set(recovered.id, recovered);
+    }
+  } catch {
+    // best-effort restore only
+  }
+}
+
 function renderHtml() {
   const packOptions = ['auto', ...DOMAIN_PACK_IDS]
     .map((id) => `<option value="${id}">${id}</option>`)
@@ -832,6 +1123,12 @@ function renderHtml() {
     .field label { font-size: 12px; color: #555; }
     .hint { font-size: 12px; color: var(--muted); }
     .quality-box { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; background: #fcfcfc; }
+    .versions-list { border: 1px solid #e5e7eb; border-radius: 10px; padding: 8px; background: #fcfcfc; max-height: 210px; overflow: auto; font-size: 12px; }
+    .version-item { padding: 6px 8px; border-bottom: 1px solid #eee; display:flex; justify-content: space-between; gap: 8px; align-items: center; }
+    .version-item:last-child { border-bottom: none; }
+    .video-grid { display:grid; grid-template-columns: 1fr; gap: 8px; }
+    .video-card { border:1px solid #e5e7eb; border-radius:10px; padding:8px; background:#fcfcfc; }
+    .video-card video { width:100%; border-radius:8px; background:#000; min-height: 140px; }
     .stack { display:flex; flex-direction: column; gap: 10px; }
     @media (max-width: 900px) {
       .split { grid-template-columns: 1fr; }
@@ -931,6 +1228,34 @@ function renderHtml() {
             <label>Domain Pack (from script)</label>
             <input id="domainPackId" type="text" readonly />
           </div>
+          <div class="field">
+            <label>Project Root</label>
+            <input id="rootOutputName" type="text" readonly />
+          </div>
+          <div class="row">
+            <button id="refreshVersions" class="secondary">Refresh Versions</button>
+          </div>
+          <div id="versionsList" class="versions-list muted">No versions loaded yet.</div>
+          <div class="field">
+            <label>Compare Left Job ID</label>
+            <select id="compareLeft"></select>
+          </div>
+          <div class="field">
+            <label>Compare Right Job ID</label>
+            <select id="compareRight"></select>
+          </div>
+          <button id="runCompare" class="secondary">Run Compare</button>
+          <div id="compareBox" class="quality-box muted">No compare run yet.</div>
+          <div class="video-grid">
+            <div class="video-card">
+              <div class="hint">Left version preview</div>
+              <video id="videoLeft" controls></video>
+            </div>
+            <div class="video-card">
+              <div class="hint">Right version preview</div>
+              <video id="videoRight" controls></video>
+            </div>
+          </div>
         </div>
       </div>
       <div id="status" class="muted">Idle.</div>
@@ -943,9 +1268,18 @@ function renderHtml() {
   const qualityBox = document.getElementById('qualityBox');
   const currentJobIdField = document.getElementById('currentJobId');
   const domainPackField = document.getElementById('domainPackId');
+  const rootOutputField = document.getElementById('rootOutputName');
+  const versionsList = document.getElementById('versionsList');
+  const compareLeft = document.getElementById('compareLeft');
+  const compareRight = document.getElementById('compareRight');
+  const compareBox = document.getElementById('compareBox');
+  const videoLeft = document.getElementById('videoLeft');
+  const videoRight = document.getElementById('videoRight');
   let timer = null;
   let currentId = null;
   let currentScript = null;
+  let currentRootOutputName = '';
+  let currentVersions = [];
 
   function setStatus(text, kind='') {
     status.textContent = text;
@@ -1076,17 +1410,125 @@ function renderHtml() {
     qualityBox.className = report.passed ? 'quality-box ok' : 'quality-box bad';
   }
 
+  function setCurrentRoot(rootOutputName) {
+    currentRootOutputName = String(rootOutputName || '').trim();
+    rootOutputField.value = currentRootOutputName;
+  }
+
+  function renderVersionOptions(versions) {
+    const options = versions.map((item) => '<option value=\"' + item.id + '\">v' + item.version + ' · ' + item.id + '</option>');
+    compareLeft.innerHTML = options.join('');
+    compareRight.innerHTML = options.join('');
+    if (versions.length >= 2) {
+      compareLeft.value = versions[0].id;
+      compareRight.value = versions[1].id;
+    } else if (versions.length === 1) {
+      compareLeft.value = versions[0].id;
+      compareRight.value = versions[0].id;
+    }
+  }
+
+  function renderVersionsList(versions) {
+    currentVersions = versions;
+    if (!Array.isArray(versions) || versions.length === 0) {
+      versionsList.className = 'versions-list muted';
+      versionsList.textContent = 'No versions yet.';
+      renderVersionOptions([]);
+      return;
+    }
+    versionsList.className = 'versions-list';
+    versionsList.innerHTML = versions
+      .map((item) => {
+        const statusBadge = item.status === 'completed'
+          ? '<span class=\"ok\">completed</span>'
+          : item.status === 'failed'
+            ? '<span class=\"bad\">failed</span>'
+            : '<span class=\"muted\">' + item.status + '</span>';
+        return '<div class=\"version-item\">'
+          + '<div><strong>v' + item.version + '</strong> · ' + item.id + '<br/><span class=\"muted\">' + item.outputName + '</span></div>'
+          + '<div>' + statusBadge + '</div>'
+          + '</div>';
+      })
+      .join('');
+    renderVersionOptions(versions);
+  }
+
+  async function refreshVersions() {
+    if (!currentRootOutputName) {
+      versionsList.className = 'versions-list muted';
+      versionsList.textContent = 'No project root selected yet.';
+      renderVersionOptions([]);
+      return;
+    }
+    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/versions');
+    const data = await res.json();
+    if (!res.ok) {
+      versionsList.className = 'versions-list bad';
+      versionsList.textContent = data.error || 'Failed to load versions';
+      return;
+    }
+    renderVersionsList(data.versions || []);
+  }
+
+  function versionById(id) {
+    return currentVersions.find((item) => item.id === id) || null;
+  }
+
+  async function runCompare() {
+    const leftId = compareLeft.value;
+    const rightId = compareRight.value;
+    if (!leftId || !rightId) {
+      setStatus('Select two versions first', 'bad');
+      return;
+    }
+    const res = await fetch('/api/jobs/' + leftId + '/compare?other=' + encodeURIComponent(rightId));
+    const data = await res.json();
+    if (!res.ok) {
+      compareBox.className = 'quality-box bad';
+      compareBox.textContent = data.error || 'Compare failed';
+      return;
+    }
+    const diff = data.diff || {};
+    const lines = [
+      'Score delta (right-left): ' + String(diff.scoreDelta),
+      'Pass transition: ' + String(diff.passTransition),
+      'Pack transition: ' + String(diff.packTransition),
+      'Hook changed: ' + String(diff.hookChanged),
+      'CTA changed: ' + String(diff.ctaChanged),
+      'Narration word delta (left-right): ' + String(diff.narrationWordDelta),
+      'Shared integrations: ' + String(diff.sharedIntegrationsCount),
+    ];
+    if (Array.isArray(diff.featureNameChanges) && diff.featureNameChanges.length > 0) {
+      lines.push('Feature name changes:');
+      diff.featureNameChanges.forEach((change) => {
+        lines.push('  - slot ' + change.slot + ': \"' + change.from + '\" -> \"' + change.to + '\"');
+      });
+    }
+    compareBox.className = 'quality-box';
+    compareBox.textContent = lines.join('\\n');
+    if (data.left && data.left.videoUrl) videoLeft.src = data.left.videoUrl;
+    else videoLeft.removeAttribute('src');
+    if (data.right && data.right.videoUrl) videoRight.src = data.right.videoUrl;
+    else videoRight.removeAttribute('src');
+    setOutput(data);
+  }
+
   async function poll() {
     if (!currentId) return;
     const res = await fetch('/api/jobs/' + currentId);
     const data = await res.json();
     setOutput(data);
+    if (data.rootOutputName) {
+      setCurrentRoot(data.rootOutputName);
+    }
     if (data.status === 'completed') {
       setStatus('Completed', 'ok');
       currentJobIdField.value = currentId;
+      await refreshVersions();
       clearInterval(timer);
     } else if (data.status === 'failed') {
       setStatus('Failed', 'bad');
+      await refreshVersions();
       clearInterval(timer);
     } else {
       setStatus('Running: ' + data.status, 'muted');
@@ -1189,10 +1631,14 @@ function renderHtml() {
       setOutput(data);
       return false;
     }
+    if (data.rootOutputName) {
+      setCurrentRoot(data.rootOutputName);
+    }
     currentId = data.id;
     currentJobIdField.value = currentId;
-    setStatus('Rerender queued: ' + currentId, 'muted');
+    setStatus('Rerender queued: ' + currentId + (data.version ? ' (v' + data.version + ')' : ''), 'muted');
     setOutput(data);
+    await refreshVersions();
     if (timer) clearInterval(timer);
     timer = setInterval(poll, 2000);
     poll();
@@ -1223,10 +1669,15 @@ function renderHtml() {
 
     currentId = data.id;
     currentScript = null;
+    setCurrentRoot(data.rootOutputName || '');
     currentJobIdField.value = currentId;
     domainPackField.value = '';
     qualityBox.className = 'quality-box muted';
     qualityBox.textContent = 'No quality check yet.';
+    compareBox.className = 'quality-box muted';
+    compareBox.textContent = 'No compare run yet.';
+    videoLeft.removeAttribute('src');
+    videoRight.removeAttribute('src');
     setStatus('Queued: ' + currentId, 'muted');
     setOutput(data);
     if (timer) clearInterval(timer);
@@ -1296,6 +1747,14 @@ function renderHtml() {
     }
     setStatus('Auto-fix passed. Queueing rerender...', 'ok');
     await queueRerender();
+  });
+
+  document.getElementById('refreshVersions').addEventListener('click', async () => {
+    await refreshVersions();
+  });
+
+  document.getElementById('runCompare').addEventListener('click', async () => {
+    await runCompare();
   });
 </script>
 </body>

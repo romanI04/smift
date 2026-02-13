@@ -44,8 +44,11 @@
 - Use `GET /api/jobs/:id/script` + `PUT /api/jobs/:id/script` for minimal JSON script edit workflow.
 - Use `POST /api/jobs/:id/validate-script` before rerendering edited scripts; it returns blockers/warnings and supports `autofix=true`.
 - Use `POST /api/jobs/:id/rerender` to render from edited script artifacts without re-scraping.
-- Rerender jobs reuse the same `outputName`, so latest render artifacts replace prior video outputs in place.
+- Rerender jobs now create versioned outputs (`root`, `root-v2`, `root-v3`, ...), preserving prior artifacts.
 - Rerender endpoint now enforces quality guard server-side; it returns `409` if edited script fails quality checks.
+- Use `GET /api/projects/:rootOutputName/versions` to retrieve version history for compare UX.
+- Use `GET /api/jobs/:id/compare?other=<jobId>` for quick quality/script delta summary.
+- Use `GET /api/jobs/:id/video` for preview playback in local compare panels.
 
 ## Domain Pack System
 

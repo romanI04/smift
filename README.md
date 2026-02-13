@@ -38,7 +38,10 @@ Paste a URL, generate a structured script with quality checks, produce narration
   - script read API: `GET /api/jobs/:id/script`
   - script edit API: `PUT /api/jobs/:id/script` with body `{ "script": <full-script-json> }`
   - script validate API: `POST /api/jobs/:id/validate-script` with body `{ "autofix": true|false }`
-  - rerender API: `POST /api/jobs/:id/rerender` (renders from existing script artifact without re-scrape)
+  - rerender API: `POST /api/jobs/:id/rerender` (quality-guarded, renders from existing script artifact without re-scrape)
+  - version list API: `GET /api/projects/:rootOutputName/versions`
+  - compare API: `GET /api/jobs/:id/compare?other=<jobId>`
+  - video stream API: `GET /api/jobs/:id/video`
 
 ## Useful Flags (`generate`)
 

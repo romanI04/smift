@@ -376,3 +376,29 @@
     - create -> load/edit/save -> validate -> rerender path verified.
     - guard rejects low-quality edited scripts (`409`) before queueing rerender.
     - valid scripts rerender successfully from script-path mode.
+
+### M26 - Versioned Rerenders + Compare UX
+
+- Added versioned rerender artifact model:
+  - rerender no longer overwrites root output; it allocates `root-v2`, `root-v3`, etc.
+  - snapshots edited script + quality to versioned artifacts before queueing rerender.
+- Added project/version APIs:
+  - `GET /api/projects/:rootOutputName/versions`
+  - returns version timeline with quality summary + artifact pointers.
+- Added compare and playback APIs:
+  - `GET /api/jobs/:id/compare?other=<jobId>` for script/quality deltas.
+  - `GET /api/jobs/:id/video` for preview streaming in UI.
+- Added local runner compare UI:
+  - version history panel
+  - left/right version selectors
+  - compare summary and side-by-side video preview.
+- Added persisted-job restore on server startup (best effort):
+  - jobs from `out/jobs/*.json` are loaded to restore version timeline context.
+- Validation:
+  - `npx tsc --noEmit` pass.
+  - API E2E:
+    - create v1 script-only job
+    - quality-check pass
+    - rerender creates new versioned output (e.g. `linear-app-v3`)
+    - compare endpoint returns deltas
+    - video endpoint serves mp4 (`200`).

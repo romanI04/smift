@@ -6,11 +6,12 @@ import {
   DOMAIN_PACK_IDS,
   getDomainPack,
   selectDomainPack,
+  type DomainPack,
   type DomainPackId,
 } from '../pipeline/domain-packs';
 import {scrapeUrl} from '../pipeline/scraper';
 import {extractGroundingHints, summarizeGroundingUsage} from '../pipeline/grounding';
-import {selectTemplate, getTemplateProfile, type TemplateId} from '../pipeline/templates';
+import {selectTemplate, getTemplateProfile, type TemplateId, type TemplateProfile} from '../pipeline/templates';
 import {scoreScriptQuality} from '../pipeline/quality';
 import {autoFixScriptQuality} from '../pipeline/autofix';
 import {regenerateScriptSection, type RegenerateSection} from '../pipeline/section-regenerate';
@@ -241,10 +242,11 @@ const server = http.createServer(async (req, res) => {
       if (!artifacts.scriptPath) return sendJson(res, 400, {error: 'script artifact missing; run job first'});
       const parsed = safeReadJson(artifacts.scriptPath);
       if (!parsed) return sendJson(res, 500, {error: 'script artifact parse failed'});
+      const normalized = normalizeScriptPayload(parsed);
       return sendJson(res, 200, {
         id: job.id,
         path: artifacts.scriptPath,
-        script: parsed,
+        script: normalized,
       });
     }
 
@@ -302,6 +304,111 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    if (method === 'POST' && /^\/api\/jobs\/[^/]+\/validate-script$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const id = parts[2];
+      const job = jobs.get(id);
+      if (!job) return sendJson(res, 404, {error: 'job not found'});
+      if (job.status === 'running' || activeJobId === id) {
+        return sendJson(res, 409, {error: 'job is running; wait until completion'});
+      }
+
+      const payload = await readJsonBody(req);
+      const autofix = Boolean(payload.autofix);
+      const artifacts = artifactsFor(job);
+      if (!artifacts.scriptPath) {
+        return sendJson(res, 400, {error: 'script artifact missing; run job first'});
+      }
+
+      const scriptRaw = safeReadJson(artifacts.scriptPath);
+      if (!scriptRaw) {
+        return sendJson(res, 500, {error: 'script artifact parse failed'});
+      }
+      const script = normalizeScriptPayload(scriptRaw);
+      const existingQuality = artifacts.qualityPath ? safeReadJson(artifacts.qualityPath) : null;
+      const context = await resolveQualityContext(job, script, existingQuality);
+
+      let nextScript = script;
+      let qualityReport = scoreScriptQuality({
+        script: nextScript,
+        scraped: context.scraped,
+        template: context.templateProfile,
+        domainPack: context.domainPack,
+        groundingHints: context.groundingHints,
+        minScore: 80,
+        maxWarnings: job.options.strict ? 0 : 3,
+        failOnWarnings: job.options.strict,
+      });
+      const autofixActions: string[] = [];
+      let generationMode = 'manual-edit-validation';
+
+      if (autofix && !qualityReport.passed) {
+        const fixed = autoFixScriptQuality(nextScript, context.scraped, context.domainPack, context.groundingHints);
+        nextScript = fixed.script;
+        autofixActions.push(...fixed.actions);
+        qualityReport = scoreScriptQuality({
+          script: nextScript,
+          scraped: context.scraped,
+          template: context.templateProfile,
+          domainPack: context.domainPack,
+          groundingHints: context.groundingHints,
+          minScore: 80,
+          maxWarnings: job.options.strict ? 0 : 3,
+          failOnWarnings: job.options.strict,
+        });
+        generationMode = 'manual-edit+autofix';
+        if (autofixActions.length > 0) {
+          fs.writeFileSync(artifacts.scriptPath, JSON.stringify(toPersistedScript(nextScript), null, 2));
+          appendLog(job, `[autofix] ${autofixActions.join(' | ')}`);
+        }
+      }
+
+      if (artifacts.qualityPath) {
+        fs.writeFileSync(
+          artifacts.qualityPath,
+          JSON.stringify(
+            {
+              generatedAt: new Date().toISOString(),
+              url: job.url,
+              template: context.templateProfile.id,
+              templateReason: context.templateReason,
+              domainPack: context.domainPack.id,
+              domainPackReason: context.packReason,
+              domainPackConfidence: context.packConfidence,
+              domainPackTopCandidates: context.packTopCandidates,
+              domainPackScores: context.packScores,
+              grounding: summarizeGroundingUsage(nextScript, context.groundingHints),
+              relevanceGuard: {
+                enabled: false,
+                applied: false,
+                actions: [],
+                warnings: [],
+              },
+              generationMode,
+              qualityReport,
+              editor: {
+                source: 'local-server-ui',
+                autofix,
+                autofixActions,
+              },
+            },
+            null,
+            2,
+          ),
+        );
+      }
+
+      persistJob(job);
+      return sendJson(res, 200, {
+        id: job.id,
+        autofix,
+        autofixActions,
+        qualityReport,
+        quality: qualitySummaryFor(job),
+        artifacts: artifactsFor(job),
+      });
+    }
+
     if (method === 'POST' && /^\/api\/jobs\/[^/]+\/rerender$/.test(url.pathname)) {
       const parts = url.pathname.split('/').filter(Boolean);
       const id = parts[2];
@@ -312,6 +419,28 @@ const server = http.createServer(async (req, res) => {
       }
       const artifacts = artifactsFor(job);
       if (!artifacts.scriptPath) return sendJson(res, 400, {error: 'script artifact missing; run job first'});
+      const scriptRaw = safeReadJson(artifacts.scriptPath);
+      if (!scriptRaw) return sendJson(res, 500, {error: 'script artifact parse failed'});
+      const script = normalizeScriptPayload(scriptRaw);
+      const existingQuality = artifacts.qualityPath ? safeReadJson(artifacts.qualityPath) : null;
+      const context = await resolveQualityContext(job, script, existingQuality);
+      const qualityReport = scoreScriptQuality({
+        script,
+        scraped: context.scraped,
+        template: context.templateProfile,
+        domainPack: context.domainPack,
+        groundingHints: context.groundingHints,
+        minScore: 80,
+        maxWarnings: job.options.strict ? 0 : 3,
+        failOnWarnings: job.options.strict,
+      });
+      if (!qualityReport.passed) {
+        return sendJson(res, 409, {
+          error: 'quality guard blocked rerender',
+          qualityReport,
+        });
+      }
+
       const payload = await readJsonBody(req);
       const rerenderJob = createRerenderJob(job, artifacts.scriptPath, payload);
       jobs.set(rerenderJob.id, rerenderJob);
@@ -418,6 +547,62 @@ function createRerenderJob(sourceJob: JobRecord, scriptPath: string, payload: Re
       sourceJobId: sourceJob.id,
     },
     logs: [],
+  };
+}
+
+interface QualityContext {
+  scraped: Awaited<ReturnType<typeof scrapeUrl>>;
+  domainPack: DomainPack;
+  templateProfile: TemplateProfile;
+  templateReason: string;
+  packReason: string;
+  packConfidence: number;
+  packTopCandidates: Array<{id: DomainPackId; score: number}>;
+  packScores: Record<string, number>;
+  groundingHints: ReturnType<typeof extractGroundingHints>;
+}
+
+async function resolveQualityContext(
+  job: JobRecord,
+  script: ScriptResult,
+  existingQuality: any,
+): Promise<QualityContext> {
+  const scraped = await scrapeUrl(job.url);
+  const packFromArtifacts = String(script.domainPackId || existingQuality?.domainPack || '').trim();
+  const selectedPackId = (DOMAIN_PACK_IDS.includes(packFromArtifacts as DomainPackId)
+    ? packFromArtifacts
+    : (job.options.pack === 'auto' ? null : job.options.pack)) as DomainPackId | null;
+  const packSelection = selectedPackId
+    ? {
+      pack: getDomainPack(selectedPackId),
+      reason: `Preserved existing pack ${selectedPackId}`,
+      confidence: 1,
+      scores: existingQuality?.domainPackScores ?? {},
+      topCandidates: existingQuality?.domainPackTopCandidates ?? [],
+    }
+    : selectDomainPack(scraped, 'auto');
+  const domainPack = packSelection.pack;
+
+  const templateFromArtifacts = String(existingQuality?.template || '').trim() as TemplateId;
+  const templateSelection = ['yc-saas', 'product-demo', 'founder-story'].includes(templateFromArtifacts)
+    ? {
+      profile: getTemplateProfile(templateFromArtifacts),
+      reason: `Preserved existing template ${templateFromArtifacts}`,
+    }
+    : selectTemplate(scraped, 'auto', domainPack.id);
+
+  const groundingHints = extractGroundingHints(scraped);
+
+  return {
+    scraped,
+    domainPack,
+    templateProfile: templateSelection.profile,
+    templateReason: templateSelection.reason,
+    packReason: packSelection.reason,
+    packConfidence: packSelection.confidence,
+    packTopCandidates: packSelection.topCandidates,
+    packScores: packSelection.scores,
+    groundingHints,
   };
 }
 
@@ -619,29 +804,47 @@ function renderHtml() {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>smift runner</title>
   <style>
-    :root { --bg:#f6f6f4; --panel:#ffffff; --ink:#111111; --muted:#666; --accent:#0b6dfc; --ok:#138a36; --bad:#b42318; }
+    :root { --bg:#f6f6f4; --panel:#ffffff; --ink:#111111; --muted:#666; --accent:#0b6dfc; --ok:#138a36; --bad:#b42318; --warn:#b54708; }
     body { margin:0; font-family: ui-sans-serif, -apple-system, Segoe UI, sans-serif; background: radial-gradient(circle at 10% 10%, #e8efe9 0, #f6f6f4 38%); color: var(--ink); }
-    .wrap { max-width: 860px; margin: 32px auto; padding: 0 16px; }
+    .wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
     .card { background:var(--panel); border:1px solid #e8e8e8; border-radius:14px; padding:16px; box-shadow:0 8px 26px rgba(0,0,0,0.05); }
     h1 { margin: 0 0 10px; font-size: 26px; }
+    h2 { margin: 16px 0 8px; font-size: 18px; }
+    h3 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.04em; color: #333; }
     .row { display:flex; gap:10px; flex-wrap: wrap; margin-bottom: 10px; }
-    input, select { padding:10px 12px; border:1px solid #ddd; border-radius:8px; font-size:14px; }
-    input[type=text] { flex:1; min-width:260px; }
+    input, select, textarea { padding:10px 12px; border:1px solid #ddd; border-radius:8px; font-size:13px; background: #fff; }
+    input[type=text] { flex:1; min-width:220px; }
+    textarea { width: 100%; min-height: 74px; font-family: ui-sans-serif, -apple-system, Segoe UI, sans-serif; }
     button { border:none; background:var(--accent); color:#fff; border-radius:8px; padding:10px 14px; font-weight:600; cursor:pointer; }
-    textarea { width: 100%; min-height: 220px; border:1px solid #ddd; border-radius:8px; padding:10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }
+    button.secondary { background: #1f2937; }
+    button.warn { background: #b54708; }
+    button:disabled { opacity: 0.65; cursor: default; }
     pre { background:#fafafa; border:1px solid #eee; border-radius:8px; padding:12px; overflow:auto; font-size:12px; }
     .muted { color:var(--muted); }
     .ok { color:var(--ok); font-weight:600; }
     .bad { color:var(--bad); font-weight:600; }
-    .split { display:grid; grid-template-columns: 1fr; gap: 12px; margin-top: 12px; }
+    .warnText { color: var(--warn); font-weight: 600; }
+    .split { display:grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-top: 12px; align-items: start; }
+    .editor-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 10px; }
+    .feature-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+    .feature-card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; background: #fcfcfc; }
+    .field { display:flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+    .field label { font-size: 12px; color: #555; }
     .hint { font-size: 12px; color: var(--muted); }
+    .quality-box { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; background: #fcfcfc; }
+    .stack { display:flex; flex-direction: column; gap: 10px; }
+    @media (max-width: 900px) {
+      .split { grid-template-columns: 1fr; }
+      .editor-grid { grid-template-columns: 1fr; }
+      .feature-grid { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <h1>smift self-serve runner</h1>
-      <p class="muted">Submit a URL, queue a job, and poll status/artifacts.</p>
+      <p class="muted">URL -> script -> structured edits -> quality guard -> rerender.</p>
       <div class="row">
         <input id="url" type="text" placeholder="https://linear.app" />
         <select id="quality"><option value="draft">draft</option><option value="yc">yc</option></select>
@@ -658,15 +861,76 @@ function renderHtml() {
           <option value="feature3">feature3</option>
           <option value="cta">cta</option>
         </select>
-        <button id="regen">Regenerate Section</button>
-        <button id="loadScript">Load Script</button>
-        <button id="saveScript">Save Script</button>
-        <button id="rerender">Rerender Edited Script</button>
+        <button id="regen" class="secondary">Regenerate Section</button>
+        <button id="loadScript" class="secondary">Load Script</button>
+        <button id="saveScript" class="secondary">Save Draft</button>
+        <button id="checkScript" class="secondary">Quality Check</button>
+        <button id="rerender">Rerender (Guarded)</button>
+        <button id="autofixRerender" class="warn">Auto-fix + Rerender</button>
       </div>
       <div class="split">
-        <div>
-          <div class="hint">Script editor (JSON). Edit hook/features/cta/narrationSegments, then save and rerender.</div>
-          <textarea id="scriptEditor" placeholder="{\n  &quot;brandName&quot;: &quot;...&quot;\n}"></textarea>
+        <div class="stack">
+          <h2>Script Editor</h2>
+          <div class="hint">Structured editor with client-side validation. Save before rerender.</div>
+          <div class="editor-grid">
+            <div class="field"><label>Brand Name</label><input id="brandName" type="text" /></div>
+            <div class="field"><label>Brand URL</label><input id="brandUrl" type="text" /></div>
+            <div class="field"><label>CTA URL</label><input id="ctaUrl" type="text" /></div>
+          </div>
+          <div class="editor-grid">
+            <div class="field"><label>Tagline</label><input id="tagline" type="text" /></div>
+            <div class="field"><label>Brand Color</label><input id="brandColor" type="text" /></div>
+            <div class="field"><label>Accent Color</label><input id="accentColor" type="text" /></div>
+          </div>
+          <div class="editor-grid">
+            <div class="field"><label>Hook Line 1</label><input id="hookLine1" type="text" /></div>
+            <div class="field"><label>Hook Line 2</label><input id="hookLine2" type="text" /></div>
+            <div class="field"><label>Hook Keyword</label><input id="hookKeyword" type="text" /></div>
+          </div>
+          <div class="field">
+            <label>Integrations (comma or new line separated)</label>
+            <textarea id="integrations"></textarea>
+          </div>
+          <div class="field">
+            <label>Narration Segments (one per line)</label>
+            <textarea id="narrationSegments" style="min-height: 130px;"></textarea>
+          </div>
+          <div class="feature-grid">
+            <div class="feature-card">
+              <h3>Feature 1</h3>
+              <div class="field"><label>Icon</label><input id="f1Icon" type="text" /></div>
+              <div class="field"><label>App Name</label><input id="f1Name" type="text" /></div>
+              <div class="field"><label>Caption</label><input id="f1Caption" type="text" /></div>
+              <div class="field"><label>Demo Lines (one per line)</label><textarea id="f1Demo"></textarea></div>
+            </div>
+            <div class="feature-card">
+              <h3>Feature 2</h3>
+              <div class="field"><label>Icon</label><input id="f2Icon" type="text" /></div>
+              <div class="field"><label>App Name</label><input id="f2Name" type="text" /></div>
+              <div class="field"><label>Caption</label><input id="f2Caption" type="text" /></div>
+              <div class="field"><label>Demo Lines (one per line)</label><textarea id="f2Demo"></textarea></div>
+            </div>
+            <div class="feature-card">
+              <h3>Feature 3</h3>
+              <div class="field"><label>Icon</label><input id="f3Icon" type="text" /></div>
+              <div class="field"><label>App Name</label><input id="f3Name" type="text" /></div>
+              <div class="field"><label>Caption</label><input id="f3Caption" type="text" /></div>
+              <div class="field"><label>Demo Lines (one per line)</label><textarea id="f3Demo"></textarea></div>
+            </div>
+          </div>
+        </div>
+        <div class="stack">
+          <h2>Quality Guard</h2>
+          <div id="qualityBox" class="quality-box muted">No quality check yet.</div>
+          <div class="hint">Rerender is guarded: script must pass quality check in current strictness mode.</div>
+          <div class="field">
+            <label>Current Job ID</label>
+            <input id="currentJobId" type="text" readonly />
+          </div>
+          <div class="field">
+            <label>Domain Pack (from script)</label>
+            <input id="domainPackId" type="text" readonly />
+          </div>
         </div>
       </div>
       <div id="status" class="muted">Idle.</div>
@@ -676,22 +940,150 @@ function renderHtml() {
 <script>
   const out = document.getElementById('out');
   const status = document.getElementById('status');
-  const editor = document.getElementById('scriptEditor');
+  const qualityBox = document.getElementById('qualityBox');
+  const currentJobIdField = document.getElementById('currentJobId');
+  const domainPackField = document.getElementById('domainPackId');
   let timer = null;
   let currentId = null;
+  let currentScript = null;
 
   function setStatus(text, kind='') {
     status.textContent = text;
     status.className = kind;
   }
 
+  function setOutput(payload) {
+    out.textContent = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+  }
+
+  function byId(id) {
+    return document.getElementById(id);
+  }
+
+  function parseLines(text) {
+    return String(text || '').split('\\n').map((line) => line.trim()).filter(Boolean);
+  }
+
+  function parseIntegrations(text) {
+    return String(text || '')
+      .split(/[,\\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  function setField(id, value) {
+    byId(id).value = value == null ? '' : String(value);
+  }
+
+  function populateFeature(index, feature) {
+    const base = 'f' + index;
+    setField(base + 'Icon', feature && feature.icon ? feature.icon : '');
+    setField(base + 'Name', feature && feature.appName ? feature.appName : '');
+    setField(base + 'Caption', feature && feature.caption ? feature.caption : '');
+    setField(base + 'Demo', feature && Array.isArray(feature.demoLines) ? feature.demoLines.join('\\n') : '');
+  }
+
+  function readFeature(index) {
+    const base = 'f' + index;
+    return {
+      icon: String(byId(base + 'Icon').value || '').trim(),
+      appName: String(byId(base + 'Name').value || '').trim(),
+      caption: String(byId(base + 'Caption').value || '').trim(),
+      demoLines: parseLines(byId(base + 'Demo').value),
+    };
+  }
+
+  function populateEditor(script) {
+    currentScript = script;
+    setField('brandName', script.brandName);
+    setField('brandUrl', script.brandUrl);
+    setField('ctaUrl', script.ctaUrl);
+    setField('tagline', script.tagline);
+    setField('brandColor', script.brandColor);
+    setField('accentColor', script.accentColor);
+    setField('hookLine1', script.hookLine1);
+    setField('hookLine2', script.hookLine2);
+    setField('hookKeyword', script.hookKeyword);
+    setField('integrations', Array.isArray(script.integrations) ? script.integrations.join('\\n') : '');
+    setField('narrationSegments', Array.isArray(script.narrationSegments) ? script.narrationSegments.join('\\n') : '');
+    populateFeature(1, script.features && script.features[0] ? script.features[0] : null);
+    populateFeature(2, script.features && script.features[1] ? script.features[1] : null);
+    populateFeature(3, script.features && script.features[2] ? script.features[2] : null);
+    domainPackField.value = script.domainPackId || '';
+  }
+
+  function buildScriptFromEditor() {
+    if (!currentScript) return null;
+    const next = JSON.parse(JSON.stringify(currentScript));
+    next.brandName = String(byId('brandName').value || '').trim();
+    next.brandUrl = String(byId('brandUrl').value || '').trim();
+    next.ctaUrl = String(byId('ctaUrl').value || '').trim();
+    next.tagline = String(byId('tagline').value || '').trim();
+    next.brandColor = String(byId('brandColor').value || '').trim();
+    next.accentColor = String(byId('accentColor').value || '').trim();
+    next.hookLine1 = String(byId('hookLine1').value || '').trim();
+    next.hookLine2 = String(byId('hookLine2').value || '').trim();
+    next.hookKeyword = String(byId('hookKeyword').value || '').trim();
+    next.integrations = parseIntegrations(byId('integrations').value);
+    next.narrationSegments = parseLines(byId('narrationSegments').value);
+    next.features = [readFeature(1), readFeature(2), readFeature(3)];
+    return next;
+  }
+
+  function validateScriptDraft(script) {
+    const errors = [];
+    if (!script.brandName) errors.push('Brand Name is required.');
+    if (!script.hookLine1) errors.push('Hook Line 1 is required.');
+    if (!script.hookLine2) errors.push('Hook Line 2 is required.');
+    if (!script.hookKeyword) errors.push('Hook Keyword is required.');
+    if (!script.ctaUrl) errors.push('CTA URL is required.');
+    if (!Array.isArray(script.features) || script.features.length < 3) errors.push('Exactly 3 features are required.');
+    if (!Array.isArray(script.narrationSegments) || script.narrationSegments.length < 5) {
+      errors.push('Narration needs at least 5 segments.');
+    }
+    (script.features || []).forEach((feature, idx) => {
+      if (!feature.appName) errors.push('Feature ' + (idx + 1) + ' App Name is required.');
+      if (!feature.caption) errors.push('Feature ' + (idx + 1) + ' Caption is required.');
+      if (!Array.isArray(feature.demoLines) || feature.demoLines.length === 0) {
+        errors.push('Feature ' + (idx + 1) + ' needs at least one demo line.');
+      }
+    });
+    return errors;
+  }
+
+  function renderQuality(result) {
+    if (!result || !result.qualityReport) {
+      qualityBox.className = 'quality-box muted';
+      qualityBox.textContent = 'No quality check yet.';
+      return;
+    }
+    const report = result.qualityReport;
+    const lines = [];
+    lines.push('Score: ' + report.score + '/' + report.minScore);
+    lines.push('Passed: ' + (report.passed ? 'yes' : 'no'));
+    if (Array.isArray(result.autofixActions) && result.autofixActions.length > 0) {
+      lines.push('Autofix Actions: ' + result.autofixActions.join(' | '));
+    }
+    if (Array.isArray(report.blockers) && report.blockers.length > 0) {
+      lines.push('Blockers:');
+      report.blockers.forEach((item) => lines.push('  - ' + item));
+    }
+    if (Array.isArray(report.warnings) && report.warnings.length > 0) {
+      lines.push('Warnings:');
+      report.warnings.forEach((item) => lines.push('  - ' + item));
+    }
+    qualityBox.textContent = lines.join('\\n');
+    qualityBox.className = report.passed ? 'quality-box ok' : 'quality-box bad';
+  }
+
   async function poll() {
     if (!currentId) return;
     const res = await fetch('/api/jobs/' + currentId);
     const data = await res.json();
-    out.textContent = JSON.stringify(data, null, 2);
+    setOutput(data);
     if (data.status === 'completed') {
       setStatus('Completed', 'ok');
+      currentJobIdField.value = currentId;
       clearInterval(timer);
     } else if (data.status === 'failed') {
       setStatus('Failed', 'bad');
@@ -710,12 +1102,101 @@ function renderHtml() {
     const data = await res.json();
     if (!res.ok) {
       setStatus('Load script failed', 'bad');
-      out.textContent = JSON.stringify(data, null, 2);
+      setOutput(data);
       return;
     }
-    editor.value = JSON.stringify(data.script, null, 2);
+    populateEditor(data.script);
     setStatus('Script loaded', 'ok');
-    out.textContent = JSON.stringify(data, null, 2);
+    setOutput(data);
+    currentJobIdField.value = currentId;
+  }
+
+  async function saveScriptDraft() {
+    if (!currentId) {
+      setStatus('No active job selected', 'bad');
+      return {ok: false, errors: ['No active job selected.']};
+    }
+    const script = buildScriptFromEditor();
+    if (!script) {
+      setStatus('Load script first', 'bad');
+      return {ok: false, errors: ['Load script first.']};
+    }
+    const draftErrors = validateScriptDraft(script);
+    if (draftErrors.length > 0) {
+      setStatus('Fix editor errors first', 'bad');
+      qualityBox.className = 'quality-box bad';
+      qualityBox.textContent = draftErrors.map((item) => '- ' + item).join('\\n');
+      return {ok: false, errors: draftErrors};
+    }
+
+    const res = await fetch('/api/jobs/' + currentId + '/script', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({script})
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('Save script failed', 'bad');
+      setOutput(data);
+      return {ok: false, errors: [data.error || 'Save script failed']};
+    }
+    currentScript = script;
+    domainPackField.value = script.domainPackId || '';
+    setStatus('Script saved', 'ok');
+    setOutput(data);
+    await poll();
+    return {ok: true, script};
+  }
+
+  async function runQualityCheck(autofix) {
+    if (!currentId) {
+      setStatus('No active job selected', 'bad');
+      return null;
+    }
+    const res = await fetch('/api/jobs/' + currentId + '/validate-script', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({autofix})
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('Quality check failed', 'bad');
+      setOutput(data);
+      return null;
+    }
+    renderQuality(data);
+    setOutput(data);
+    if (autofix) {
+      await loadScript();
+    }
+    return data;
+  }
+
+  async function queueRerender() {
+    const payload = {
+      quality: document.getElementById('quality').value,
+      strict: document.getElementById('strict').value === 'true',
+      voice: 'none'
+    };
+    const res = await fetch('/api/jobs/' + currentId + '/rerender', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('Rerender failed to queue', 'bad');
+      setOutput(data);
+      return false;
+    }
+    currentId = data.id;
+    currentJobIdField.value = currentId;
+    setStatus('Rerender queued: ' + currentId, 'muted');
+    setOutput(data);
+    if (timer) clearInterval(timer);
+    timer = setInterval(poll, 2000);
+    poll();
+    return true;
   }
 
   document.getElementById('submit').addEventListener('click', async () => {
@@ -736,13 +1217,18 @@ function renderHtml() {
     const data = await res.json();
     if (!res.ok) {
       setStatus('Submit failed', 'bad');
-      out.textContent = JSON.stringify(data, null, 2);
+      setOutput(data);
       return;
     }
 
     currentId = data.id;
+    currentScript = null;
+    currentJobIdField.value = currentId;
+    domainPackField.value = '';
+    qualityBox.className = 'quality-box muted';
+    qualityBox.textContent = 'No quality check yet.';
     setStatus('Queued: ' + currentId, 'muted');
-    out.textContent = JSON.stringify(data, null, 2);
+    setOutput(data);
     if (timer) clearInterval(timer);
     timer = setInterval(poll, 2000);
     poll();
@@ -762,75 +1248,54 @@ function renderHtml() {
     const data = await res.json();
     if (!res.ok) {
       setStatus('Regenerate failed', 'bad');
-      out.textContent = JSON.stringify(data, null, 2);
+      setOutput(data);
       return;
     }
     setStatus('Section regenerated: ' + section, 'ok');
-    out.textContent = JSON.stringify(data, null, 2);
+    setOutput(data);
+    renderQuality({qualityReport: data.quality && data.quality.available ? {score: data.quality.score, minScore: 80, passed: data.quality.passed, blockers: [], warnings: []} : null});
+    await loadScript();
     poll();
   });
 
   document.getElementById('loadScript').addEventListener('click', loadScript);
 
   document.getElementById('saveScript').addEventListener('click', async () => {
-    if (!currentId) {
-      setStatus('No active job selected', 'bad');
-      return;
+    await saveScriptDraft();
+  });
+
+  document.getElementById('checkScript').addEventListener('click', async () => {
+    const saved = await saveScriptDraft();
+    if (!saved || !saved.ok) return;
+    const quality = await runQualityCheck(false);
+    if (quality && quality.qualityReport) {
+      setStatus(quality.qualityReport.passed ? 'Quality check passed' : 'Quality check failed', quality.qualityReport.passed ? 'ok' : 'bad');
     }
-    if (!editor.value.trim()) {
-      setStatus('Script editor is empty', 'bad');
-      return;
-    }
-    let script;
-    try {
-      script = JSON.parse(editor.value);
-    } catch (e) {
-      setStatus('Script JSON is invalid', 'bad');
-      return;
-    }
-    const res = await fetch('/api/jobs/' + currentId + '/script', {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({script})
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Save script failed', 'bad');
-      out.textContent = JSON.stringify(data, null, 2);
-      return;
-    }
-    setStatus('Script saved', 'ok');
-    out.textContent = JSON.stringify(data, null, 2);
-    poll();
   });
 
   document.getElementById('rerender').addEventListener('click', async () => {
-    if (!currentId) {
-      setStatus('No active job selected', 'bad');
+    const saved = await saveScriptDraft();
+    if (!saved || !saved.ok) return;
+    const quality = await runQualityCheck(false);
+    if (!quality || !quality.qualityReport) return;
+    if (!quality.qualityReport.passed) {
+      setStatus('Rerender blocked by quality guard', 'bad');
       return;
     }
-    const payload = {
-      quality: document.getElementById('quality').value,
-      strict: document.getElementById('strict').value === 'true',
-      voice: 'none'
-    };
-    const res = await fetch('/api/jobs/' + currentId + '/rerender', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Rerender failed to queue', 'bad');
-      out.textContent = JSON.stringify(data, null, 2);
+    await queueRerender();
+  });
+
+  document.getElementById('autofixRerender').addEventListener('click', async () => {
+    const saved = await saveScriptDraft();
+    if (!saved || !saved.ok) return;
+    const quality = await runQualityCheck(true);
+    if (!quality || !quality.qualityReport) return;
+    if (!quality.qualityReport.passed) {
+      setStatus('Auto-fix could not pass quality guard', 'bad');
       return;
     }
-    currentId = data.id;
-    setStatus('Rerender queued: ' + currentId, 'muted');
-    out.textContent = JSON.stringify(data, null, 2);
-    if (timer) clearInterval(timer);
-    timer = setInterval(poll, 2000);
-    poll();
+    setStatus('Auto-fix passed. Queueing rerender...', 'ok');
+    await queueRerender();
   });
 </script>
 </body>

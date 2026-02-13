@@ -37,6 +37,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
   - section regenerate API: `POST /api/jobs/:id/regenerate` with body `{ "section": "hook|feature1|feature2|feature3|cta" }`
   - script read API: `GET /api/jobs/:id/script`
   - script edit API: `PUT /api/jobs/:id/script` with body `{ "script": <full-script-json> }`
+  - script validate API: `POST /api/jobs/:id/validate-script` with body `{ "autofix": true|false }`
   - rerender API: `POST /api/jobs/:id/rerender` (renders from existing script artifact without re-scrape)
 
 ## Useful Flags (`generate`)

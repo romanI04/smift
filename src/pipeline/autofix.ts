@@ -151,14 +151,14 @@ export function autoFixScriptQuality(
   }
   next.narrationSegments = normalizeNarrationWordCount(next.narrationSegments, domainPack.concreteFields);
   next.narrationSegments = next.narrationSegments.map((segment) => {
-    let sanitized = segment;
+    let sanitized = typeof segment === 'string' ? segment : '';
     for (const regex of forbiddenRegexes) {
       sanitized = sanitized.replace(regex, 'domain context');
     }
     return sanitized;
   });
 
-  next.sceneWeights = next.narrationSegments.map((segment) => Math.max(2, countWords(segment)));
+  next.sceneWeights = next.narrationSegments.map((segment) => Math.max(2, countWords(typeof segment === 'string' ? segment : '')));
 
   return {script: next, actions};
 }

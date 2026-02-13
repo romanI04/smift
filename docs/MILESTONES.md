@@ -355,3 +355,24 @@
     - pack accuracy `100%` (`10/10`)
     - pass rate `100%` (`10/10`)
     - errors `0`.
+
+### M25 - Structured Editor + Quality-Guarded Rerender (Phase B UX)
+
+- Reworked local runner UX from raw JSON editing to structured script editing controls:
+  - brand/hook/cta fields
+  - integrations + narration segment editors
+  - per-feature icon/name/caption/demo editors.
+- Added pre-rerender quality guard endpoint:
+  - `POST /api/jobs/:id/validate-script`
+  - returns full quality report for current edited script.
+  - supports `autofix=true` to apply deterministic fixes before rerender attempts.
+- Added server-side rerender guard enforcement:
+  - `POST /api/jobs/:id/rerender` now validates current script and returns `409` on quality failure.
+- Fixed autofix crash on sparse narration arrays:
+  - `autoFixScriptQuality()` now safely handles undefined segments during sanitization.
+- Validation:
+  - `npx tsc --noEmit` pass.
+  - API E2E:
+    - create -> load/edit/save -> validate -> rerender path verified.
+    - guard rejects low-quality edited scripts (`409`) before queueing rerender.
+    - valid scripts rerender successfully from script-path mode.

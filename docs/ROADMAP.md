@@ -134,7 +134,9 @@ Scope:
   - Step 9: 20-URL QA benchmark run.
   - Step 10: patched top failure classes (blocked-domain fetch resilience + gaming fallback routing).
 - Next up:
-  - Begin Phase B UX polish after validating script editor ergonomics on real users.
+  - Continue Phase B UX polish:
+    - structured editor + quality guard are implemented in local runner.
+    - next priority is versioned rerenders and compare UX.
 
 ## 5) Non-Negotiable Prioritization Rules
 

@@ -42,8 +42,10 @@
 - Use `GET /api/jobs/:id/quality` (or `?view=quality`) for cheap status polling when full artifacts are unnecessary.
 - Use `POST /api/jobs/:id/regenerate` for targeted iteration (`hook`, `feature1..3`, `cta`) without re-running full workflow from scratch.
 - Use `GET /api/jobs/:id/script` + `PUT /api/jobs/:id/script` for minimal JSON script edit workflow.
+- Use `POST /api/jobs/:id/validate-script` before rerendering edited scripts; it returns blockers/warnings and supports `autofix=true`.
 - Use `POST /api/jobs/:id/rerender` to render from edited script artifacts without re-scraping.
 - Rerender jobs reuse the same `outputName`, so latest render artifacts replace prior video outputs in place.
+- Rerender endpoint now enforces quality guard server-side; it returns `409` if edited script fails quality checks.
 
 ## Domain Pack System
 
@@ -71,6 +73,7 @@
 - Render relevance guard runs post-generation. If you need raw model behavior for debugging, run with `--no-relevance-guard`.
 - Guard may be intentionally skipped if it regresses quality gates; check `quality.relevanceGuard` in output JSON for rollback details.
 - Keep fallback hooks grounding-aware. When model calls fail, generic hooks become a major relevance regression vector.
+- `autoFixScriptQuality()` now safely handles sparse/partial narration arrays during sanitization (no crash on undefined segment holes).
 
 ## Real Benchmarking
 

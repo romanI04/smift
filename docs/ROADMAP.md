@@ -129,8 +129,12 @@ Scope:
   - Step 4: first-5-second hook grounding improvements.
   - Step 5: hook quality rubric and scoring penalties.
   - Step 6: script section regeneration API.
-- Next up:
   - Step 7: minimal script edit UI flow.
+  - Step 8: rerender-from-edited-script flow (no re-scrape).
+  - Step 9: 20-URL QA benchmark run.
+  - Step 10: patched top failure classes (blocked-domain fetch resilience + gaming fallback routing).
+- Next up:
+  - Begin Phase B UX polish after validating script editor ergonomics on real users.
 
 ## 5) Non-Negotiable Prioritization Rules
 

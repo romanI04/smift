@@ -23,6 +23,9 @@
 - Scraper now supports `scrapeMode=metadata-fallback` for blocked pages; check this first when outputs look generic.
 - If a domain is blocked/challenged, sanitize metadata and avoid feeding challenge-copy into grounding.
 - Run `npm run eval:scraper` after scraper changes to catch blocked-page fallback regressions before real-url evals.
+- Scraper now degrades gracefully on hard fetch failures:
+  - it can reuse non-OK HTML responses as fallback source input,
+  - it emits synthetic metadata fallback instead of hard-failing when every fetch candidate is blocked.
 
 ## Eval Harness
 
@@ -38,6 +41,9 @@
 - Server now supports pack control (`payload.pack` / UI dropdown), forwarded to `generate --pack=...`.
 - Use `GET /api/jobs/:id/quality` (or `?view=quality`) for cheap status polling when full artifacts are unnecessary.
 - Use `POST /api/jobs/:id/regenerate` for targeted iteration (`hook`, `feature1..3`, `cta`) without re-running full workflow from scratch.
+- Use `GET /api/jobs/:id/script` + `PUT /api/jobs/:id/script` for minimal JSON script edit workflow.
+- Use `POST /api/jobs/:id/rerender` to render from edited script artifacts without re-scraping.
+- Rerender jobs reuse the same `outputName`, so latest render artifacts replace prior video outputs in place.
 
 ## Domain Pack System
 

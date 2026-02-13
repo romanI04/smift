@@ -309,3 +309,49 @@
   - scans `src/` for forbidden avatar-focused source terms.
 - Added CI enforcement:
   - `.github/workflows/pack-regression.yml` now runs `npm run check:vision`.
+
+### M23 - Script Edit UI + Rerender Workflow (Roadmap Day 7-8)
+
+- Added script editing workflow to local server:
+  - `GET /api/jobs/:id/script`
+  - `PUT /api/jobs/:id/script`
+  - normalizes and persists edited scripts via shared script IO utilities.
+- Added rerender workflow without re-scrape:
+  - `POST /api/jobs/:id/rerender`
+  - queues a rerender job that calls `generate --script-path=... --output-name=...`.
+- Extended pipeline runner (`run.ts`) with script-path mode:
+  - supports `--script-path=<file>` and `--output-name=<name>`.
+  - bypasses scrape/generation and proceeds directly to voice/render.
+- Added UI controls in self-serve page:
+  - load script, save script, rerender edited script.
+- Validation:
+  - `npx tsc --noEmit` pass.
+  - manual E2E:
+    - create job (`skipRender=true`)
+    - load script from API
+    - edit + save script
+    - queue rerender
+    - verify rendered artifact (`out/linear-app.mp4`) produced from edited script path.
+
+### M24 - 20-URL QA + Failure-Class Patches (Roadmap Day 9-10)
+
+- Ran 20-URL real benchmark QA pass and identified fetch-block failure class on challenge-heavy domains.
+- Scraper resilience hardening:
+  - non-OK HTML fallback reuse when available.
+  - synthetic metadata fallback when all fetch candidates fail (no hard throw).
+  - fetch warning propagation into `scrapeWarnings`.
+- Metadata fallback enrichment:
+  - domain-hint injection into fallback extraction for sparse/blocked pages.
+- Domain-pack tuning for blocked gaming domains:
+  - added gaming high-signal terms (`op.gg`, `tracker.gg`, `mobalytics`, `tftacademy`, etc.).
+- Validation:
+  - `npm run eval:scraper`: `100%` (`5/5`).
+  - `npm run eval:packs`: `100%` (`14/14`).
+  - `npm run eval:real -- --limit=20 --max-script-attempts=1 --allow-low-quality`:
+    - pack accuracy `100%` (`20/20`)
+    - pass rate `100%` (`20/20`)
+    - errors `0`
+  - `npm run eval:real:smoke`:
+    - pack accuracy `100%` (`10/10`)
+    - pass rate `100%` (`10/10`)
+    - errors `0`.

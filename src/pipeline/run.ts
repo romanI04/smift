@@ -8,6 +8,7 @@ import {autoFixScriptQuality} from './autofix';
 import type {ScriptResult} from './script-types';
 import {extractGroundingHints, summarizeGroundingUsage, type GroundingHints} from './grounding';
 import {applyRenderRelevanceGuard} from './relevance-guard';
+import {normalizeScriptPayload, toPersistedScript} from './script-io';
 import {
   DOMAIN_PACK_IDS,
   selectDomainPack,
@@ -50,6 +51,8 @@ interface JobManifest {
 
 async function run() {
   const args = process.argv.slice(2);
+  const scriptPathArg = parseStringArg(args, '--script-path');
+  const outputNameArg = parseStringArg(args, '--output-name');
   const voiceEngine = parseEnumArg<VoiceEngine>(args, '--voice', ['none', 'elevenlabs', 'openai', 'chatterbox']);
   const quality = parseEnumArg<QualityPreset>(args, '--quality', ['draft', 'yc']) ?? 'yc';
   const templateArg = parseEnumArg<TemplateArg>(args, '--template', ['auto', 'yc-saas', 'product-demo', 'founder-story']) ?? 'auto';
@@ -66,19 +69,26 @@ async function run() {
   const skipRender = args.includes('--skip-render');
   const url = args.find((a) => !a.startsWith('--'));
 
-  if (!url) {
+  if (!url && !scriptPathArg) {
     console.error(
       'Usage: npm run generate -- <url> [--voice=none|elevenlabs|openai|chatterbox] [--quality=draft|yc] ' +
       '[--template=auto|yc-saas|product-demo|founder-story] [--pack=auto|<pack-id>] [--voice-mode=single|segmented] ' +
       '[--quality-mode=standard|strict] [--strict] [--max-warnings=3] [--min-quality=74] ' +
-      '[--max-script-attempts=4] [--allow-low-quality] [--no-autofix] [--no-relevance-guard] [--skip-render]',
+      '[--max-script-attempts=4] [--allow-low-quality] [--no-autofix] [--no-relevance-guard] [--skip-render] ' +
+      '[--script-path=/abs/or/relative/script.json] [--output-name=name]',
     );
     process.exit(1);
   }
 
   const effectiveQualityMode: QualityMode = strictFlag ? 'strict' : qualityMode;
-
-  const outputName = url.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-');
+  const scriptPath = scriptPathArg ? path.resolve(scriptPathArg) : null;
+  const outputName = outputNameArg
+    ? outputNameArg.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-')
+    : (url
+      ? url.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-')
+      : (scriptPath
+        ? path.basename(scriptPath).replace(/\.json$/i, '').replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-')
+        : `smift-${Date.now()}`));
   const outputDir = path.resolve(__dirname, '../../out');
   const publicDir = path.resolve(__dirname, '../../public');
   const manifestPath = path.join(outputDir, `${outputName}-job.json`);
@@ -88,12 +98,14 @@ async function run() {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     status: 'running',
-    url,
+    url: url ?? scriptPath ?? 'script-path-mode',
     settings: {
       voiceEngine: voiceEngine ?? 'auto',
       quality,
       template: templateArg,
       pack: packArg,
+      scriptPath,
+      outputName,
       voiceMode,
       qualityMode: effectiveQualityMode,
       minQuality,
@@ -128,170 +140,192 @@ async function run() {
   saveManifest();
 
   try {
-    console.log(`\n[1/5] Scraping ${url}...`);
-    const scraped = await scrapeUrl(url);
-    track('scrape', 'Scrape completed', {
-      title: scraped.title,
-      headings: scraped.headings.length,
-      features: scraped.features.length,
-      structuredHints: scraped.structuredHints.length,
-      scrapeMode: scraped.scrapeMode ?? 'full',
-      scrapeWarnings: scraped.scrapeWarnings ?? [],
-    });
-    console.log(`  -> ${scraped.title}`);
-    console.log(`  -> ${scraped.headings.length} headings, ${scraped.features.length} features found`);
-    console.log(`  -> ${scraped.structuredHints.length} structured hints found`);
-    if (scraped.scrapeMode && scraped.scrapeMode !== 'full') {
-      console.log(`  -> Scrape mode: ${scraped.scrapeMode} (${(scraped.scrapeWarnings ?? []).join(', ') || 'no warning'})`);
-    }
-    const groundingHints = extractGroundingHints(scraped);
-    track('grounding', 'Grounding hints extracted', {
-      terms: groundingHints.terms.length,
-      phrases: groundingHints.phrases.length,
-      featureNameCandidates: groundingHints.featureNameCandidates.length,
-      numbers: groundingHints.numbers.length,
-      integrations: groundingHints.integrationCandidates.length,
-    });
-    console.log(`  -> Grounding hints: ${groundingHints.terms.length} terms, ${groundingHints.phrases.length} phrases, ${groundingHints.featureNameCandidates.length} names, ${groundingHints.numbers.length} numbers`);
+    let script: ScriptResult;
+    let fullNarration = '';
 
-    const domainPackSelection = selectDomainPack(scraped, packArg);
-    track('pack', 'Domain pack selected', {
-      id: domainPackSelection.pack.id,
-      reason: domainPackSelection.reason,
-      confidence: domainPackSelection.confidence,
-      topCandidates: domainPackSelection.topCandidates,
-    });
-    console.log(`  -> Domain pack: ${domainPackSelection.pack.id} (${domainPackSelection.reason})`);
-    console.log(`  -> Pack confidence: ${domainPackSelection.confidence.toFixed(2)}`);
-    if (domainPackSelection.topCandidates.length > 0) {
-      const top = domainPackSelection.topCandidates
-        .map((candidate) => `${candidate.id}:${candidate.score.toFixed(2)}`)
-        .join(', ');
-      console.log(`  -> Top pack candidates: ${top}`);
-    }
+    if (scriptPath) {
+      console.log(`\n[1/5] Loading existing script ${scriptPath}...`);
+      if (!fs.existsSync(scriptPath)) {
+        throw new Error(`Script file not found: ${scriptPath}`);
+      }
+      script = normalizeScriptPayload(JSON.parse(fs.readFileSync(scriptPath, 'utf-8')));
+      fullNarration = script.narrationSegments.join(' ');
+      manifest.outputs.scriptPath = scriptPath;
+      track('script', 'Loaded script from path', {
+        scriptPath,
+        brand: script.brandName,
+        features: script.features.length,
+      });
+      console.log(`  -> Brand: ${script.brandName}`);
+      console.log(`  -> Features: ${script.features.map((f) => f.appName).join(', ')}`);
+      console.log(`  -> Narration words: ${countWords(fullNarration)}`);
+      console.log('\n[2/5] Skipping scrape+generation (script-path mode)');
+    } else {
+      console.log(`\n[1/5] Scraping ${url}...`);
+      const scraped = await scrapeUrl(url as string);
+      track('scrape', 'Scrape completed', {
+        title: scraped.title,
+        headings: scraped.headings.length,
+        features: scraped.features.length,
+        structuredHints: scraped.structuredHints.length,
+        scrapeMode: scraped.scrapeMode ?? 'full',
+        scrapeWarnings: scraped.scrapeWarnings ?? [],
+      });
+      console.log(`  -> ${scraped.title}`);
+      console.log(`  -> ${scraped.headings.length} headings, ${scraped.features.length} features found`);
+      console.log(`  -> ${scraped.structuredHints.length} structured hints found`);
+      if (scraped.scrapeMode && scraped.scrapeMode !== 'full') {
+        console.log(`  -> Scrape mode: ${scraped.scrapeMode} (${(scraped.scrapeWarnings ?? []).join(', ') || 'no warning'})`);
+      }
+      const groundingHints = extractGroundingHints(scraped);
+      track('grounding', 'Grounding hints extracted', {
+        terms: groundingHints.terms.length,
+        phrases: groundingHints.phrases.length,
+        featureNameCandidates: groundingHints.featureNameCandidates.length,
+        numbers: groundingHints.numbers.length,
+        integrations: groundingHints.integrationCandidates.length,
+      });
+      console.log(`  -> Grounding hints: ${groundingHints.terms.length} terms, ${groundingHints.phrases.length} phrases, ${groundingHints.featureNameCandidates.length} names, ${groundingHints.numbers.length} numbers`);
 
-    const templateSelection = selectTemplate(scraped, templateArg, domainPackSelection.pack.id);
-    track('template', 'Template selected', {id: templateSelection.profile.id, reason: templateSelection.reason});
-    console.log(`  -> Template: ${templateSelection.profile.id} (${templateSelection.reason})`);
+      const domainPackSelection = selectDomainPack(scraped, packArg);
+      track('pack', 'Domain pack selected', {
+        id: domainPackSelection.pack.id,
+        reason: domainPackSelection.reason,
+        confidence: domainPackSelection.confidence,
+        topCandidates: domainPackSelection.topCandidates,
+      });
+      console.log(`  -> Domain pack: ${domainPackSelection.pack.id} (${domainPackSelection.reason})`);
+      console.log(`  -> Pack confidence: ${domainPackSelection.confidence.toFixed(2)}`);
+      if (domainPackSelection.topCandidates.length > 0) {
+        const top = domainPackSelection.topCandidates
+          .map((candidate) => `${candidate.id}:${candidate.score.toFixed(2)}`)
+          .join(', ');
+        console.log(`  -> Top pack candidates: ${top}`);
+      }
 
-    console.log(`\n[2/5] Generating script with quality gate...`);
-    const generated = await generateScriptWithQualityGate({
-      scraped,
-      templateSelection,
-      domainPackSelection,
-      minQuality,
-      maxWarnings,
-      qualityMode: effectiveQualityMode,
-      maxScriptAttempts,
-      allowLowQuality,
-      autoFix,
-      groundingHints,
-    });
-    let script = generated.script;
-    let qualityReport = generated.qualityReport;
-    const generationMode = generated.generationMode;
-    let relevanceGuardApplied = false;
-    let relevanceGuardActions: string[] = [];
-    let relevanceGuardWarnings: string[] = [];
+      const templateSelection = selectTemplate(scraped, templateArg, domainPackSelection.pack.id);
+      track('template', 'Template selected', {id: templateSelection.profile.id, reason: templateSelection.reason});
+      console.log(`  -> Template: ${templateSelection.profile.id} (${templateSelection.reason})`);
 
-    if (relevanceGuardEnabled) {
-      const guarded = applyRenderRelevanceGuard({
-        script,
+      console.log(`\n[2/5] Generating script with quality gate...`);
+      const generated = await generateScriptWithQualityGate({
         scraped,
-        domainPack: domainPackSelection.pack,
+        templateSelection,
+        domainPackSelection,
+        minQuality,
+        maxWarnings,
+        qualityMode: effectiveQualityMode,
+        maxScriptAttempts,
+        allowLowQuality,
+        autoFix,
         groundingHints,
       });
-      relevanceGuardActions = guarded.actions;
-      relevanceGuardWarnings = guarded.warnings;
+      script = generated.script;
+      let qualityReport = generated.qualityReport;
+      const generationMode = generated.generationMode;
+      let relevanceGuardApplied = false;
+      let relevanceGuardActions: string[] = [];
+      let relevanceGuardWarnings: string[] = [];
 
-      if (guarded.actions.length > 0 || guarded.warnings.length > 0) {
-        console.log(`  -> Relevance guard actions: ${guarded.actions.length}, warnings: ${guarded.warnings.length}`);
-      }
-
-      if (guarded.actions.length > 0) {
-        const guardedReport = scoreScriptQuality({
-          script: guarded.script,
+      if (relevanceGuardEnabled) {
+        const guarded = applyRenderRelevanceGuard({
+          script,
           scraped,
-          template: templateSelection.profile,
           domainPack: domainPackSelection.pack,
           groundingHints,
-          minScore: minQuality,
-          maxWarnings,
-          failOnWarnings: effectiveQualityMode === 'strict',
         });
+        relevanceGuardActions = guarded.actions;
+        relevanceGuardWarnings = guarded.warnings;
 
-        const guardRegressed = qualityReport.passed && !guardedReport.passed && !allowLowQuality;
-        if (guardRegressed) {
-          console.warn('  -> Relevance guard rollback: guarded script failed quality gate.');
-          relevanceGuardWarnings.push('Guard rollback due to quality regression.');
-        } else {
-          script = guarded.script;
-          qualityReport = guardedReport;
-          relevanceGuardApplied = true;
+        if (guarded.actions.length > 0 || guarded.warnings.length > 0) {
+          console.log(`  -> Relevance guard actions: ${guarded.actions.length}, warnings: ${guarded.warnings.length}`);
+        }
+
+        if (guarded.actions.length > 0) {
+          const guardedReport = scoreScriptQuality({
+            script: guarded.script,
+            scraped,
+            template: templateSelection.profile,
+            domainPack: domainPackSelection.pack,
+            groundingHints,
+            minScore: minQuality,
+            maxWarnings,
+            failOnWarnings: effectiveQualityMode === 'strict',
+          });
+
+          const guardRegressed = qualityReport.passed && !guardedReport.passed && !allowLowQuality;
+          if (guardRegressed) {
+            console.warn('  -> Relevance guard rollback: guarded script failed quality gate.');
+            relevanceGuardWarnings.push('Guard rollback due to quality regression.');
+          } else {
+            script = guarded.script;
+            qualityReport = guardedReport;
+            relevanceGuardApplied = true;
+          }
         }
       }
-    }
 
-    track('script', 'Script generated', {
-      score: qualityReport.score,
-      passed: qualityReport.passed,
-      generationMode,
-      relevanceGuardApplied,
-      relevanceGuardActions: relevanceGuardActions.length,
-      warnings: qualityReport.warnings.length,
-      blockers: qualityReport.blockers.length,
-    });
+      track('script', 'Script generated', {
+        score: qualityReport.score,
+        passed: qualityReport.passed,
+        generationMode,
+        relevanceGuardApplied,
+        relevanceGuardActions: relevanceGuardActions.length,
+        warnings: qualityReport.warnings.length,
+        blockers: qualityReport.blockers.length,
+      });
 
-    console.log(`  -> Script mode: ${generationMode}${relevanceGuardApplied ? '+relevance-guard' : ''}`);
-    console.log(`  -> Quality score: ${qualityReport.score}/${qualityReport.minScore} (passed=${qualityReport.passed})`);
-    if (qualityReport.blockers.length > 0) {
-      console.log(`  -> Blockers: ${qualityReport.blockers.join(' | ')}`);
-    }
-    if (qualityReport.warnings.length > 0) {
-      console.log(`  -> Warnings: ${qualityReport.warnings.slice(0, 3).join(' | ')}`);
-    }
+      console.log(`  -> Script mode: ${generationMode}${relevanceGuardApplied ? '+relevance-guard' : ''}`);
+      console.log(`  -> Quality score: ${qualityReport.score}/${qualityReport.minScore} (passed=${qualityReport.passed})`);
+      if (qualityReport.blockers.length > 0) {
+        console.log(`  -> Blockers: ${qualityReport.blockers.join(' | ')}`);
+      }
+      if (qualityReport.warnings.length > 0) {
+        console.log(`  -> Warnings: ${qualityReport.warnings.slice(0, 3).join(' | ')}`);
+      }
 
-    const fullNarration = script.narrationSegments.join(' ');
-    console.log(`  -> Brand: ${script.brandName}`);
-    console.log(`  -> Features: ${script.features.map((f) => f.appName).join(', ')}`);
-    console.log(`  -> Narration words: ${countWords(fullNarration)}`);
+      fullNarration = script.narrationSegments.join(' ');
+      console.log(`  -> Brand: ${script.brandName}`);
+      console.log(`  -> Features: ${script.features.map((f) => f.appName).join(', ')}`);
+      console.log(`  -> Narration words: ${countWords(fullNarration)}`);
 
-    const scriptPath = path.join(outputDir, `${outputName}-script.json`);
-    fs.writeFileSync(scriptPath, JSON.stringify({...script, narration: fullNarration}, null, 2));
-    manifest.outputs.scriptPath = scriptPath;
+      const generatedScriptPath = path.join(outputDir, `${outputName}-script.json`);
+      fs.writeFileSync(generatedScriptPath, JSON.stringify(toPersistedScript(script), null, 2));
+      manifest.outputs.scriptPath = generatedScriptPath;
 
-    const qualityPath = path.join(outputDir, `${outputName}-quality.json`);
-    fs.writeFileSync(
-      qualityPath,
-      JSON.stringify(
-        {
-          generatedAt: new Date().toISOString(),
-          url,
-          template: templateSelection.profile.id,
-          templateReason: templateSelection.reason,
-          domainPack: domainPackSelection.pack.id,
-          domainPackReason: domainPackSelection.reason,
-          domainPackConfidence: domainPackSelection.confidence,
-          domainPackTopCandidates: domainPackSelection.topCandidates,
-          domainPackScores: domainPackSelection.scores,
-          grounding: summarizeGroundingUsage(script, groundingHints),
-          relevanceGuard: {
-            enabled: relevanceGuardEnabled,
-            applied: relevanceGuardApplied,
-            actions: relevanceGuardActions,
-            warnings: relevanceGuardWarnings,
+      const qualityPath = path.join(outputDir, `${outputName}-quality.json`);
+      fs.writeFileSync(
+        qualityPath,
+        JSON.stringify(
+          {
+            generatedAt: new Date().toISOString(),
+            url,
+            template: templateSelection.profile.id,
+            templateReason: templateSelection.reason,
+            domainPack: domainPackSelection.pack.id,
+            domainPackReason: domainPackSelection.reason,
+            domainPackConfidence: domainPackSelection.confidence,
+            domainPackTopCandidates: domainPackSelection.topCandidates,
+            domainPackScores: domainPackSelection.scores,
+            grounding: summarizeGroundingUsage(script, groundingHints),
+            relevanceGuard: {
+              enabled: relevanceGuardEnabled,
+              applied: relevanceGuardApplied,
+              actions: relevanceGuardActions,
+              warnings: relevanceGuardWarnings,
+            },
+            generationMode,
+            qualityReport,
           },
-          generationMode,
-          qualityReport,
-        },
-        null,
-        2,
-      ),
-    );
-    manifest.outputs.qualityPath = qualityPath;
-    track('script', 'Script artifacts saved', {scriptPath, qualityPath});
-    console.log(`  -> Saved script: ${scriptPath}`);
-    console.log(`  -> Saved quality report: ${qualityPath}`);
+          null,
+          2,
+        ),
+      );
+      manifest.outputs.qualityPath = qualityPath;
+      track('script', 'Script artifacts saved', {scriptPath: generatedScriptPath, qualityPath});
+      console.log(`  -> Saved script: ${generatedScriptPath}`);
+      console.log(`  -> Saved quality report: ${qualityPath}`);
+    }
 
     if (skipRender) {
       console.log('\n[3/5] Skipping voice/render (--skip-render enabled)');
@@ -620,6 +654,13 @@ function parseNumberArg(args: string[], key: string, fallback: number): number {
   const value = Number(raw.split('=')[1]);
   if (!Number.isFinite(value)) throw new Error(`Invalid numeric value for ${key}: ${raw}`);
   return value;
+}
+
+function parseStringArg(args: string[], key: string): string | undefined {
+  const raw = args.find((arg) => arg.startsWith(`${key}=`));
+  if (!raw) return undefined;
+  const value = raw.slice(`${key}=`.length).trim();
+  return value || undefined;
 }
 
 function estimateNarrationDurationMs(text: string): number {

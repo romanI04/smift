@@ -35,6 +35,9 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `npm run serve`: local self-serve queue + web UI (`http://localhost:3030`)
   - quality-only status view: `GET /api/jobs/:id/quality` (or `GET /api/jobs/:id?view=quality`)
   - section regenerate API: `POST /api/jobs/:id/regenerate` with body `{ "section": "hook|feature1|feature2|feature3|cta" }`
+  - script read API: `GET /api/jobs/:id/script`
+  - script edit API: `PUT /api/jobs/:id/script` with body `{ "script": <full-script-json> }`
+  - rerender API: `POST /api/jobs/:id/rerender` (renders from existing script artifact without re-scrape)
 
 ## Useful Flags (`generate`)
 
@@ -51,6 +54,8 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `--no-autofix`
 - `--no-relevance-guard`
 - `--skip-render`
+- `--script-path=<path-to-script.json>` (rerender from edited script without scraping/generation)
+- `--output-name=<name>` (pair with `--script-path` to control output artifact names)
 
 ## Useful Flags (`eval:real`)
 

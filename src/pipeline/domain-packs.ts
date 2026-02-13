@@ -202,6 +202,7 @@ const DOMAIN_PACKS: Record<DomainPackId, DomainPack> = {
     description: 'Competitive gaming, game analytics, community strategy tools.',
     preferredTemplate: 'product-demo',
     keywords: ['patch', 'meta', 'tier list', 'ranked', 'champion', 'build', 'esports', 'guide', 'comp', 'win rate'],
+    signalTerms: ['op.gg', 'tracker.gg', 'mobalytics', 'tft', 'tftacademy', 'teamfight tactics', 'riot games', 'league of legends'],
     allowedIcons: ['media', 'social', 'chat', 'analytics', 'docs', 'calendar', 'generic'],
     forbiddenTerms: [
       'pipeline ops',

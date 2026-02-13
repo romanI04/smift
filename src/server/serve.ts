@@ -15,8 +15,10 @@ import {scoreScriptQuality} from '../pipeline/quality';
 import {autoFixScriptQuality} from '../pipeline/autofix';
 import {regenerateScriptSection, type RegenerateSection} from '../pipeline/section-regenerate';
 import type {ScriptResult} from '../pipeline/script-types';
+import {normalizeScriptPayload, toPersistedScript} from '../pipeline/script-io';
 
 type JobStatus = 'queued' | 'running' | 'completed' | 'failed';
+type JobMode = 'generate' | 'rerender';
 
 interface JobRecord {
   id: string;
@@ -29,11 +31,14 @@ interface JobRecord {
   error?: string;
   outputName: string;
   options: {
+    mode: JobMode;
     strict: boolean;
     quality: 'draft' | 'yc';
     voice: 'none' | 'openai' | 'elevenlabs' | 'chatterbox';
     skipRender: boolean;
     pack: 'auto' | DomainPackId;
+    scriptPath?: string;
+    sourceJobId?: string;
   };
   logs: string[];
 }
@@ -227,6 +232,102 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    if (method === 'GET' && /^\/api\/jobs\/[^/]+\/script$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const id = parts[2];
+      const job = jobs.get(id);
+      if (!job) return sendJson(res, 404, {error: 'job not found'});
+      const artifacts = artifactsFor(job);
+      if (!artifacts.scriptPath) return sendJson(res, 400, {error: 'script artifact missing; run job first'});
+      const parsed = safeReadJson(artifacts.scriptPath);
+      if (!parsed) return sendJson(res, 500, {error: 'script artifact parse failed'});
+      return sendJson(res, 200, {
+        id: job.id,
+        path: artifacts.scriptPath,
+        script: parsed,
+      });
+    }
+
+    if (method === 'PUT' && /^\/api\/jobs\/[^/]+\/script$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const id = parts[2];
+      const job = jobs.get(id);
+      if (!job) return sendJson(res, 404, {error: 'job not found'});
+      if (job.status === 'running' || activeJobId === id) {
+        return sendJson(res, 409, {error: 'job is running; wait until completion'});
+      }
+      const artifacts = artifactsFor(job);
+      if (!artifacts.scriptPath) return sendJson(res, 400, {error: 'script artifact missing; run job first'});
+      const payload = await readJsonBody(req);
+      const candidate = (payload.script && typeof payload.script === 'object')
+        ? payload.script
+        : payload;
+
+      let normalized: ScriptResult;
+      try {
+        normalized = normalizeScriptPayload(candidate);
+      } catch (error: any) {
+        return sendJson(res, 400, {error: `invalid script payload: ${error.message}`});
+      }
+
+      fs.writeFileSync(artifacts.scriptPath, JSON.stringify(toPersistedScript(normalized), null, 2));
+
+      if (artifacts.qualityPath) {
+        const existingQuality = safeReadJson(artifacts.qualityPath) ?? {};
+        fs.writeFileSync(
+          artifacts.qualityPath,
+          JSON.stringify(
+            {
+              ...existingQuality,
+              generatedAt: new Date().toISOString(),
+              generationMode: 'manual-edit',
+              qualityReport: existingQuality.qualityReport ?? null,
+              editor: {
+                source: 'local-server-ui',
+                note: 'Script edited manually. Re-render recommended.',
+              },
+            },
+            null,
+            2,
+          ),
+        );
+      }
+
+      appendLog(job, '[edit] script updated manually');
+      persistJob(job);
+      return sendJson(res, 200, {
+        id: job.id,
+        updated: true,
+        artifacts: artifactsFor(job),
+      });
+    }
+
+    if (method === 'POST' && /^\/api\/jobs\/[^/]+\/rerender$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const id = parts[2];
+      const job = jobs.get(id);
+      if (!job) return sendJson(res, 404, {error: 'job not found'});
+      if (job.status === 'running' || activeJobId === id) {
+        return sendJson(res, 409, {error: 'job is running; wait until completion'});
+      }
+      const artifacts = artifactsFor(job);
+      if (!artifacts.scriptPath) return sendJson(res, 400, {error: 'script artifact missing; run job first'});
+      const payload = await readJsonBody(req);
+      const rerenderJob = createRerenderJob(job, artifacts.scriptPath, payload);
+      jobs.set(rerenderJob.id, rerenderJob);
+      queue.push(rerenderJob.id);
+      persistJob(rerenderJob);
+      appendLog(job, `[rerender] queued rerender job ${rerenderJob.id}`);
+      tickQueue();
+
+      return sendJson(res, 201, {
+        id: rerenderJob.id,
+        sourceJobId: job.id,
+        status: rerenderJob.status,
+        mode: rerenderJob.options.mode,
+      });
+    }
+
     if (method === 'GET' && url.pathname.startsWith('/api/jobs/')) {
       const parts = url.pathname.split('/').filter(Boolean);
       const id = parts[2];
@@ -281,11 +382,40 @@ function createJob(url: string, payload: Record<string, unknown>): JobRecord {
     createdAt: new Date().toISOString(),
     outputName,
     options: {
+      mode: 'generate',
       strict,
       quality,
       voice,
       skipRender,
       pack,
+    },
+    logs: [],
+  };
+}
+
+function createRerenderJob(sourceJob: JobRecord, scriptPath: string, payload: Record<string, unknown>): JobRecord {
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const quality = payload.quality === 'yc' ? 'yc' : sourceJob.options.quality;
+  const voice = (['none', 'openai', 'elevenlabs', 'chatterbox'].includes(String(payload.voice))
+    ? String(payload.voice)
+    : sourceJob.options.voice) as JobRecord['options']['voice'];
+  const strict = payload.strict === undefined ? sourceJob.options.strict : Boolean(payload.strict);
+
+  return {
+    id,
+    url: sourceJob.url,
+    status: 'queued',
+    createdAt: new Date().toISOString(),
+    outputName: sourceJob.outputName,
+    options: {
+      mode: 'rerender',
+      strict,
+      quality,
+      voice,
+      skipRender: false,
+      pack: sourceJob.options.pack,
+      scriptPath,
+      sourceJobId: sourceJob.id,
     },
     logs: [],
   };
@@ -304,21 +434,30 @@ function tickQueue() {
   job.startedAt = new Date().toISOString();
   persistJob(job);
 
-  const args = [
-    'run',
-    'generate',
-    '--',
-    job.url,
-    `--voice=${job.options.voice}`,
-    `--quality=${job.options.quality}`,
-    `--pack=${job.options.pack}`,
-    '--template=auto',
-    '--max-script-attempts=2',
-    '--min-quality=80',
-  ];
+  const args = ['run', 'generate', '--'];
+  if (job.options.mode === 'rerender') {
+    args.push(
+      `--script-path=${job.options.scriptPath}`,
+      `--output-name=${job.outputName}`,
+      `--voice=${job.options.voice}`,
+      `--quality=${job.options.quality}`,
+      '--max-script-attempts=1',
+      '--min-quality=80',
+    );
+  } else {
+    args.push(
+      job.url,
+      `--voice=${job.options.voice}`,
+      `--quality=${job.options.quality}`,
+      `--pack=${job.options.pack}`,
+      '--template=auto',
+      '--max-script-attempts=2',
+      '--min-quality=80',
+    );
+    if (job.options.skipRender) args.push('--skip-render');
+  }
 
   if (job.options.strict) args.push('--strict');
-  if (job.options.skipRender) args.push('--skip-render');
 
   const child = spawn('npm', args, {
     cwd,
@@ -489,10 +628,13 @@ function renderHtml() {
     input, select { padding:10px 12px; border:1px solid #ddd; border-radius:8px; font-size:14px; }
     input[type=text] { flex:1; min-width:260px; }
     button { border:none; background:var(--accent); color:#fff; border-radius:8px; padding:10px 14px; font-weight:600; cursor:pointer; }
+    textarea { width: 100%; min-height: 220px; border:1px solid #ddd; border-radius:8px; padding:10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }
     pre { background:#fafafa; border:1px solid #eee; border-radius:8px; padding:12px; overflow:auto; font-size:12px; }
     .muted { color:var(--muted); }
     .ok { color:var(--ok); font-weight:600; }
     .bad { color:var(--bad); font-weight:600; }
+    .split { display:grid; grid-template-columns: 1fr; gap: 12px; margin-top: 12px; }
+    .hint { font-size: 12px; color: var(--muted); }
   </style>
 </head>
 <body>
@@ -517,6 +659,15 @@ function renderHtml() {
           <option value="cta">cta</option>
         </select>
         <button id="regen">Regenerate Section</button>
+        <button id="loadScript">Load Script</button>
+        <button id="saveScript">Save Script</button>
+        <button id="rerender">Rerender Edited Script</button>
+      </div>
+      <div class="split">
+        <div>
+          <div class="hint">Script editor (JSON). Edit hook/features/cta/narrationSegments, then save and rerender.</div>
+          <textarea id="scriptEditor" placeholder="{\n  &quot;brandName&quot;: &quot;...&quot;\n}"></textarea>
+        </div>
       </div>
       <div id="status" class="muted">Idle.</div>
       <pre id="out">No job yet.</pre>
@@ -525,6 +676,7 @@ function renderHtml() {
 <script>
   const out = document.getElementById('out');
   const status = document.getElementById('status');
+  const editor = document.getElementById('scriptEditor');
   let timer = null;
   let currentId = null;
 
@@ -547,6 +699,23 @@ function renderHtml() {
     } else {
       setStatus('Running: ' + data.status, 'muted');
     }
+  }
+
+  async function loadScript() {
+    if (!currentId) {
+      setStatus('No active job selected', 'bad');
+      return;
+    }
+    const res = await fetch('/api/jobs/' + currentId + '/script');
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('Load script failed', 'bad');
+      out.textContent = JSON.stringify(data, null, 2);
+      return;
+    }
+    editor.value = JSON.stringify(data.script, null, 2);
+    setStatus('Script loaded', 'ok');
+    out.textContent = JSON.stringify(data, null, 2);
   }
 
   document.getElementById('submit').addEventListener('click', async () => {
@@ -598,6 +767,69 @@ function renderHtml() {
     }
     setStatus('Section regenerated: ' + section, 'ok');
     out.textContent = JSON.stringify(data, null, 2);
+    poll();
+  });
+
+  document.getElementById('loadScript').addEventListener('click', loadScript);
+
+  document.getElementById('saveScript').addEventListener('click', async () => {
+    if (!currentId) {
+      setStatus('No active job selected', 'bad');
+      return;
+    }
+    if (!editor.value.trim()) {
+      setStatus('Script editor is empty', 'bad');
+      return;
+    }
+    let script;
+    try {
+      script = JSON.parse(editor.value);
+    } catch (e) {
+      setStatus('Script JSON is invalid', 'bad');
+      return;
+    }
+    const res = await fetch('/api/jobs/' + currentId + '/script', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({script})
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('Save script failed', 'bad');
+      out.textContent = JSON.stringify(data, null, 2);
+      return;
+    }
+    setStatus('Script saved', 'ok');
+    out.textContent = JSON.stringify(data, null, 2);
+    poll();
+  });
+
+  document.getElementById('rerender').addEventListener('click', async () => {
+    if (!currentId) {
+      setStatus('No active job selected', 'bad');
+      return;
+    }
+    const payload = {
+      quality: document.getElementById('quality').value,
+      strict: document.getElementById('strict').value === 'true',
+      voice: 'none'
+    };
+    const res = await fetch('/api/jobs/' + currentId + '/rerender', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('Rerender failed to queue', 'bad');
+      out.textContent = JSON.stringify(data, null, 2);
+      return;
+    }
+    currentId = data.id;
+    setStatus('Rerender queued: ' + currentId, 'muted');
+    out.textContent = JSON.stringify(data, null, 2);
+    if (timer) clearInterval(timer);
+    timer = setInterval(poll, 2000);
     poll();
   });
 </script>

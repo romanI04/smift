@@ -43,6 +43,11 @@ const FEATURE_NOISE_WORDS = new Set([
   'leading', 'highest', 'trusted', 'deliver', 'delivering', 'powerful', 'smarter',
 ]);
 
+const FEATURE_VERB_WORDS = new Set([
+  'make', 'move', 'define', 'review', 'understand', 'build', 'built', 'turn', 'plan', 'deploy', 'take',
+  'care', 'grow', 'start', 'manage', 'track', 'improve', 'launch', 'ship', 'run',
+]);
+
 const KNOWN_TOOLS = [
   'Slack', 'Notion', 'HubSpot', 'Zapier', 'GitHub', 'Vercel', 'Sentry', 'Linear',
   'Shopify', 'Stripe', 'Klaviyo', 'Zendesk', 'Plaid', 'QuickBooks', 'Salesforce',
@@ -431,24 +436,16 @@ function isStrongFeatureLabel(label: string): boolean {
   if (lowerWords.some((word) => FEATURE_NOISE_WORDS.has(word))) return false;
   if (lowerWords.some((word) => /andthe|theand|withthe|forthe/.test(word))) return false;
   if (lowerWords.some((word) => word.length > 16)) return false;
+  // Labels ending in bare verbs read as awkward artifacts ("Direction Define").
+  if (FEATURE_VERB_WORDS.has(lowerWords[lowerWords.length - 1])) return false;
   return true;
 }
 
 function sanitizeFeatureToken(token: string): string {
-  let lower = token.toLowerCase();
-  const connectors = ['and', 'the', 'for', 'with', 'from', 'into', 'across', 'to', 'of'];
-
-  for (const connector of connectors) {
-    if (lower.endsWith(connector) && lower.length - connector.length >= 3) {
-      lower = lower.slice(0, -connector.length);
-    }
-  }
-
-  return lower.trim();
+  return token.toLowerCase().trim();
 }
 
 function featureLabelFromPhrase(phrase: string): string {
-  const verbLike = new Set(['make', 'move', 'define', 'review', 'understand', 'build', 'built', 'turn', 'plan', 'deploy', 'take']);
   const tokens = phrase
     .replace(/[^a-zA-Z0-9\s]/g, ' ')
     .split(/\s+/)
@@ -456,8 +453,21 @@ function featureLabelFromPhrase(phrase: string): string {
     .filter(Boolean)
     .filter((token) => token.length >= 3 && !STOP_WORDS.has(token) && !FEATURE_NOISE_WORDS.has(token));
 
-  const prioritized = [...tokens.filter((token) => !verbLike.has(token)), ...tokens.filter((token) => verbLike.has(token))];
-  const label = toTitleCase(prioritized.slice(0, 3).join(' '));
+  const nonVerbs = tokens.filter((token) => !FEATURE_VERB_WORDS.has(token));
+  const verbs = tokens.filter((token) => FEATURE_VERB_WORDS.has(token));
+
+  // Prefer noun-like terms. Only borrow verbs if there are too few non-verb tokens.
+  const selected = [...nonVerbs.slice(0, 3)];
+  for (const verb of verbs) {
+    if (selected.length >= 2) break;
+    selected.push(verb);
+  }
+
+  if (selected.length >= 3 && FEATURE_VERB_WORDS.has(selected[selected.length - 1])) {
+    selected.pop();
+  }
+
+  const label = toTitleCase(selected.slice(0, 3).join(' '));
   return cleanupFeatureLabel(label);
 }
 

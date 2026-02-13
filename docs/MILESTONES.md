@@ -2,6 +2,54 @@
 
 ## 2026-02-13
 
+### M38 - Launch Snapshot + Demo/GTM Pack
+
+- Added business-facing launch snapshot:
+  - `docs/LAUNCH_STATUS.md` (what Smift can do now, what is missing, next priorities).
+- Added GTM package:
+  - `docs/GTM_PACKAGE.md` (ICP, offer, pricing, launch motion, script).
+- Added polished demo package documentation:
+  - `docs/DEMO_SET.md`
+  - `out/demo-set-v1.json`
+  - demo renders: `out/demo-linear-v1.mp4`, `out/demo-intercom-v1.mp4`, `out/demo-shopify-v1.mp4`, `out/demo-vercel-v1.mp4`.
+
+### M37 - Minimum Paid Flow (Auth + Billing + Credits)
+
+- Added local commerce store:
+  - `src/server/commerce.ts`
+  - signup/login/logout/session auth
+  - plan state (`starter`, `growth`)
+  - credit ledger + top-up + charge operations
+- Added API routes:
+  - `POST /api/auth/signup`
+  - `POST /api/auth/login`
+  - `POST /api/auth/logout`
+  - `GET /api/auth/me`
+  - `GET /api/billing/summary`
+  - `POST /api/billing/topup`
+  - `POST /api/billing/plan`
+- Enforced auth/ownership on job and project endpoints in `serve.ts`:
+  - protected `/api/jobs/:id*` read endpoints
+  - protected `/api/projects/:rootOutputName/*` endpoints
+  - blocked cross-user job/project access with `403`.
+- Added credit charging behavior:
+  - charge 1 credit for new render jobs (`skipRender=false`)
+  - charge 1 credit for rerender
+  - charge 1 credit for auto-improve auto-rerender.
+- Added runner UI controls:
+  - sign up / log in / log out
+  - refresh billing
+  - set plan
+  - add top-up credits
+  - persisted auth token and startup auth restore.
+- Added per-user root isolation for new projects by owner-prefixed root output names.
+- Validation:
+  - `npx tsc --noEmit` pass
+  - local API smoke:
+    - starter credits `20 -> 19` after one render request
+    - owner access `200` for own job
+    - cross-user access `403` for both job and project routes.
+
 ### M36 - Auto-Promote Evaluation Runner + Baseline
 
 - Added `src/pipeline/eval-autopromote.ts` and npm command `npm run eval:autopromote`.

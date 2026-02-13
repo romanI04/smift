@@ -133,8 +133,13 @@ Scope:
   - Step 8: rerender-from-edited-script flow (no re-scrape).
   - Step 9: 20-URL QA benchmark run.
   - Step 10: patched top failure classes (blocked-domain fetch resilience + gaming fallback routing).
+  - Phase C kickoff: minimum paid flow implemented in local runner:
+    - auth (signup/login/logout/session)
+    - billing summary + plan switching
+    - credits ledger + top-up + per-render charging
+    - cross-user access controls on job/project APIs.
 - Next up:
-  - Continue Phase B UX polish:
+  - Continue Phase B/Phase C bridge:
     - structured editor + quality guard are implemented in local runner.
     - versioned rerenders + compare UX are implemented in local runner.
     - best-version recommendation and version lifecycle controls are implemented in local runner.
@@ -148,6 +153,7 @@ Scope:
     - configurable promotion policy thresholds (minimum recommendation confidence for auto-promote) are now implemented.
     - threshold calibration by segment (core-icp vs broad) using accepted/rejected outcomes is now implemented.
     - next priority is confidence-threshold validation on real customer runs (monitor auto-promote precision/recall over 20+ outcomes).
+    - replace manual credit top-up with real payment checkout to complete paid beta readiness.
 
 ## 5) Non-Negotiable Prioritization Rules
 

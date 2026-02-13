@@ -115,7 +115,7 @@
 - Better brand-name extraction for titles with separators (e.g. `Linear – Plan and build products`).
 - Add dedicated retry backoff policy per TTS engine + transient network errors.
 - Add persistent queue backend (SQLite/Redis) for crash recovery.
-- Add auth/quotas before exposing self-serve runner beyond localhost.
+- Replace local-file auth/credits with production auth + payment processor before public launch.
 - Add a renderless "quality-only" output mode in server responses for fast triage.
 - Add domain-aware terms to scraper extraction (e.g. schema.org / JSON-LD hints) to improve pack confidence on sparse landing pages.
 - Reduce repetitive feature-name roots on sparse single-theme sites (e.g. TFT pages repeating "Teamfight Tactics" variants).

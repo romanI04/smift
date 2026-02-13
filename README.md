@@ -31,6 +31,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
 - `npm run eval:real:smoke`: CI-friendly real-URL smoke suite with threshold gating
 - `npm run eval:customer`: customer-style corpus benchmark
 - `npm run eval:customer:core`: core paying-segment benchmark (primary GTM gate)
+- `npm run eval:autopromote`: auto-promote precision/recall report from project audit + outcome metadata
 - `npm run check:vision`: scope-lock validation (vision/roadmap guard)
 - `npm run serve`: local self-serve queue + web UI (`http://localhost:3030`)
   - quality-only status view: `GET /api/jobs/:id/quality` (or `GET /api/jobs/:id?view=quality`)

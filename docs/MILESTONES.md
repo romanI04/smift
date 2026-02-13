@@ -2,6 +2,21 @@
 
 ## 2026-02-13
 
+### M36 - Auto-Promote Evaluation Runner + Baseline
+
+- Added `src/pipeline/eval-autopromote.ts` and npm command `npm run eval:autopromote`.
+- Runner computes:
+  - audit attempt counts (`promoted` / `skipped` / `failed`)
+  - auto-promote precision (promoted accepted vs promoted rejected)
+  - auto-promote recall (promoted accepted vs eligible accepted auto-promote rerenders)
+  - segment split (`core-icp`, `broad`)
+  - minimum evidence gate (`20` outcomes) for reliable threshold validation.
+- Initial baseline run output:
+  - `out/eval-autopromote-20260213-063348.json`
+  - outcomes: `2` (insufficient vs required `20`)
+  - attempts: `2` (`0` promoted, `2` skipped, `0` failed)
+  - precision/recall: `n/a` (no promoted accepted/rejected evidence yet).
+
 ### M35 - Segment-Calibrated Promotion Policy
 
 - Added segment-aware promotion policy thresholds (`core-icp` and `broad`) with backward-compatible global fallback.

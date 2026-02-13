@@ -59,6 +59,8 @@
 - Use `POST /api/projects/:rootOutputName/promotion-policy/calibrate` to compute/apply segment-specific (`core-icp` vs `broad`) thresholds from accepted/rejected outcomes.
 - `auto-improve` now accepts `autoPromoteMinConfidence`; rerenders only auto-promote when recommendation confidence clears that threshold.
 - `auto-improve`/rerender can pass `autoPromoteSegment` so policy applies the correct segment threshold.
+- Use `npm run eval:autopromote` to compute promotion precision/recall from audit + version outcome metadata; it emits `out/eval-autopromote-*.json`.
+- Treat `eval:autopromote` as informational until outcome count reaches at least 20; below that threshold, calibration decisions are low-confidence.
 - Use `GET /api/jobs/:id/compare?other=<jobId>` for quick quality/script delta summary.
 - Use `GET /api/jobs/:id/video` for preview playback in local compare panels.
 - Pinning a version now automatically unarchives it; archiving a version automatically unpins it.

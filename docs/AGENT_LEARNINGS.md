@@ -53,6 +53,7 @@
 - Use `GET /api/jobs/:id/improvement-plan` to rank which script section to regenerate first (`hook`, `feature1..3`, `cta`).
 - Use `POST /api/jobs/:id/auto-improve` for bounded multi-step section iteration (`maxSteps`, `targetScore`, `maxWarnings`, `autofix`).
 - `auto-improve` supports optional auto-rerender when loop reaches target (`autoRerender=true`, optional `rerenderStrict`).
+- `auto-improve` also supports `autoPromoteIfWinner`: rerender is promoted automatically only if that rerender is recommendation winner at completion time.
 - Use `GET /api/jobs/:id/compare?other=<jobId>` for quick quality/script delta summary.
 - Use `GET /api/jobs/:id/video` for preview playback in local compare panels.
 - Pinning a version now automatically unarchives it; archiving a version automatically unpins it.
@@ -60,6 +61,7 @@
 - Improvement-plan ranking combines quality issues (warnings/blockers) with script heuristics and should be used before manual regenerate loops.
 - Auto-improve loop has hard stop conditions (`target-reached`, `max-steps`, `stalled`, `sections-exhausted`) to prevent mindless iteration.
 - If auto-rerender is enabled, auto-improve can switch active work to a new versioned rerender job immediately after reaching thresholds.
+- Auto-promote does not bypass ranking/pin logic; it only executes when the rerendered version is the current recommendation winner.
 
 ## Domain Pack System
 

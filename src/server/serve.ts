@@ -32,18 +32,19 @@ interface JobRecord {
   exitCode?: number;
   error?: string;
   outputName: string;
-  options: {
-    mode: JobMode;
-    strict: boolean;
-    quality: 'draft' | 'yc';
-    voice: 'none' | 'openai' | 'elevenlabs' | 'chatterbox';
+    options: {
+      mode: JobMode;
+      strict: boolean;
+      quality: 'draft' | 'yc';
+      voice: 'none' | 'openai' | 'elevenlabs' | 'chatterbox';
     skipRender: boolean;
     pack: 'auto' | DomainPackId;
     rootOutputName: string;
-    version: number;
-    scriptPath?: string;
-    sourceJobId?: string;
-  };
+      version: number;
+      scriptPath?: string;
+      sourceJobId?: string;
+      autoPromoteIfWinner?: boolean;
+    };
   logs: string[];
 }
 
@@ -114,6 +115,7 @@ interface AutoImproveConfig {
   autofix: boolean;
   autoRerender: boolean;
   rerenderStrict: boolean;
+  autoPromoteIfWinner: boolean;
 }
 
 interface AutoImproveIteration {
@@ -796,6 +798,7 @@ function createRerenderJob(
     ? String(payload.voice)
     : sourceJob.options.voice) as JobRecord['options']['voice'];
   const strict = payload.strict === undefined ? sourceJob.options.strict : Boolean(payload.strict);
+  const autoPromoteIfWinner = Boolean(payload.autoPromoteIfWinner);
 
   return {
     id,
@@ -814,6 +817,7 @@ function createRerenderJob(
       version,
       scriptPath,
       sourceJobId: sourceJob.id,
+      autoPromoteIfWinner,
     },
     logs: [],
   };
@@ -1012,6 +1016,9 @@ function resolveAutoImproveConfig(payload: Record<string, unknown>, defaultStric
     autofix: payload.autofix === undefined ? true : Boolean(payload.autofix),
     autoRerender: payload.autoRerender === undefined ? false : Boolean(payload.autoRerender),
     rerenderStrict: payload.rerenderStrict === undefined ? strict : Boolean(payload.rerenderStrict),
+    autoPromoteIfWinner: payload.autoPromoteIfWinner === undefined
+      ? Boolean(payload.autoRerender)
+      : Boolean(payload.autoPromoteIfWinner),
   };
 }
 
@@ -1037,6 +1044,7 @@ async function runAutoImproveLoop(
           outputName: string | null;
           rootOutputName: string | null;
           version: number | null;
+          autoPromoteIfWinner: boolean;
         };
         quality: ReturnType<typeof qualitySummaryFor>;
         artifacts: ReturnType<typeof artifactsFor>;
@@ -1079,6 +1087,7 @@ async function runAutoImproveLoop(
     outputName: string | null;
     rootOutputName: string | null;
     version: number | null;
+    autoPromoteIfWinner: boolean;
   } = {
     queued: false,
     reason: 'disabled',
@@ -1086,6 +1095,7 @@ async function runAutoImproveLoop(
     outputName: null,
     rootOutputName: null,
     version: null,
+    autoPromoteIfWinner: config.autoPromoteIfWinner,
   };
 
   for (let step = 1; step <= config.maxSteps; step++) {
@@ -1206,6 +1216,7 @@ async function runAutoImproveLoop(
         strict: config.rerenderStrict,
         quality: job.options.quality,
         voice: job.options.voice,
+        autoPromoteIfWinner: config.autoPromoteIfWinner,
       },
       generationMode: 'auto-improve-validation',
       versioningSource: 'auto-improve',
@@ -1217,6 +1228,7 @@ async function runAutoImproveLoop(
       outputName: queued.outputName,
       rootOutputName: queued.rootOutputName,
       version: queued.version,
+      autoPromoteIfWinner: config.autoPromoteIfWinner,
     };
   } else if (!config.autoRerender) {
     rerenderResult = {
@@ -1226,6 +1238,7 @@ async function runAutoImproveLoop(
       outputName: null,
       rootOutputName: null,
       version: null,
+      autoPromoteIfWinner: config.autoPromoteIfWinner,
     };
   } else {
     rerenderResult = {
@@ -1235,6 +1248,7 @@ async function runAutoImproveLoop(
       outputName: null,
       rootOutputName: null,
       version: null,
+      autoPromoteIfWinner: config.autoPromoteIfWinner,
     };
   }
 
@@ -1360,6 +1374,39 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
   return Math.min(max, Math.max(min, Math.round(parsed)));
 }
 
+function tryAutoPromoteIfRerenderWinner(job: JobRecord) {
+  if (job.options.mode !== 'rerender') return;
+  if (!job.options.autoPromoteIfWinner) return;
+  if (job.status !== 'completed') {
+    appendLog(job, '[autopromote] skipped: rerender did not complete successfully');
+    return;
+  }
+  const rootOutputName = getRootOutputName(job);
+  const recommendation = recommendProjectVersion(rootOutputName);
+  const recommendedId = recommendation.recommended?.id || null;
+  if (!recommendedId) {
+    appendLog(job, '[autopromote] skipped: no recommendation available');
+    return;
+  }
+  if (recommendedId !== job.id) {
+    appendLog(job, `[autopromote] skipped: winner is ${recommendedId}, not this rerender`);
+    return;
+  }
+  const promoted = promoteProjectWinner(rootOutputName, job.id);
+  if (!promoted.ok) {
+    appendLog(job, `[autopromote] failed: ${promoted.error}`);
+    return;
+  }
+  appendLog(job, `[autopromote] promoted v${promoted.promoted.version} (${promoted.promoted.id})`);
+  const sourceJobId = job.options.sourceJobId;
+  if (sourceJobId) {
+    const sourceJob = jobs.get(sourceJobId);
+    if (sourceJob) {
+      appendLog(sourceJob, `[autopromote] promoted rerender winner ${promoted.promoted.id}`);
+    }
+  }
+}
+
 function tickQueue() {
   if (activeJobId) return;
   const nextId = queue.shift();
@@ -1421,6 +1468,7 @@ function tickQueue() {
     job.status = code === 0 ? 'completed' : 'failed';
     if (code !== 0) job.error = `generate exited with code ${code}`;
     persistJob(job);
+    tryAutoPromoteIfRerenderWinner(job);
     activeJobId = null;
     tickQueue();
   });
@@ -2463,6 +2511,10 @@ function renderHtml() {
               <option value="true">rerender strict</option>
               <option value="false">rerender standard</option>
             </select>
+            <select id="autoPromoteIfWinner">
+              <option value="true">auto promote if winner</option>
+              <option value="false">no auto promote</option>
+            </select>
             <button id="runAutoImprove" class="secondary">Run Auto Improve</button>
           </div>
           <div id="fixPlanBox" class="quality-box muted">No section improvement plan yet.</div>
@@ -3138,6 +3190,7 @@ function renderHtml() {
     }
     if (data.rerender) {
       lines.push('Rerender: ' + (data.rerender.queued ? ('queued ' + data.rerender.id + ' (v' + data.rerender.version + ')') : data.rerender.reason));
+      lines.push('Auto promote if winner: ' + String(Boolean(data.rerender.autoPromoteIfWinner)));
     }
     if (data.iterations.length > 0) {
       lines.push('Iterations:');
@@ -3160,7 +3213,8 @@ function renderHtml() {
       maxWarnings: Number(document.getElementById('autoMaxWarnings').value),
       autofix: document.getElementById('autoAutofix').value === 'true',
       autoRerender: document.getElementById('autoRerender').value === 'true',
-      rerenderStrict: document.getElementById('autoRerenderStrict').value === 'true'
+      rerenderStrict: document.getElementById('autoRerenderStrict').value === 'true',
+      autoPromoteIfWinner: document.getElementById('autoPromoteIfWinner').value === 'true'
     };
     setStatus('Running auto improve...', 'muted');
     const res = await fetch('/api/jobs/' + currentId + '/auto-improve', {

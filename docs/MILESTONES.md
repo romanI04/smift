@@ -526,3 +526,21 @@
   - `npm run check:vision` pass.
   - local API smoke:
     - `POST /api/jobs/:id/auto-improve` returns rerender metadata and queues render when enabled and target reached.
+
+### M32 - Auto-Promote If Rerender Wins Recommendation
+
+- Extended auto-improve rerender flow with `autoPromoteIfWinner` control.
+- Rerender job options now persist `autoPromoteIfWinner` so completion logic can apply promotion safely.
+- Queue completion hook now evaluates rerender jobs with `autoPromoteIfWinner=true`:
+  - checks whether completed rerender is current recommendation winner.
+  - only then promotes via existing `promoteProjectWinner()` flow.
+  - appends audit logs on promote/skip reasons.
+- Updated local runner auto-improve controls:
+  - added `auto promote if winner` toggle.
+  - auto-improve result panel now shows whether auto-promotion was requested.
+- Validation:
+  - `npx tsc --noEmit` pass.
+  - `npm run check:vision` pass.
+  - local API smoke:
+    - auto-improve accepts `autoPromoteIfWinner`.
+    - rerender job metadata includes `autoPromoteIfWinner`.

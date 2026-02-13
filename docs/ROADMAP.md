@@ -143,7 +143,8 @@ Scope:
     - section-level auto-improvement recommendations are now implemented (with one-click apply-top-fix flow).
     - bounded auto-iteration loop controls are now implemented (improve->check cycle with hard stop conditions).
     - optional auto-rerender trigger on publish-threshold is now implemented.
-    - next priority is auto-promote candidate when rerender result wins recommendation.
+    - auto-promote-if-winner after auto-rerender is now implemented.
+    - next priority is background watch mode for rerender completion + richer promotion audit trail.
 
 ## 5) Non-Negotiable Prioritization Rules
 

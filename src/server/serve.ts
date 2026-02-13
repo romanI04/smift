@@ -98,6 +98,14 @@ interface OutcomeLearning {
   byPackTemplate: Map<string, OutcomeCounts>;
 }
 
+interface SectionImprovementRecommendation {
+  section: RegenerateSection;
+  priority: number;
+  confidence: number;
+  impact: 'high' | 'medium' | 'low';
+  reasons: string[];
+}
+
 const cwd = path.resolve(__dirname, '../..');
 const outDir = path.join(cwd, 'out');
 const jobsDir = path.join(outDir, 'jobs');
@@ -699,6 +707,13 @@ const server = http.createServer(async (req, res) => {
 
       if (parts.length === 4 && parts[3] === 'quality') {
         return sendJson(res, 200, qualitySummaryFor(job));
+      }
+
+      if (parts.length === 4 && parts[3] === 'improvement-plan') {
+        const rawLimit = Number(url.searchParams.get('limit') || 3);
+        const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(5, Math.floor(rawLimit))) : 3;
+        const plan = buildSectionImprovementPlan(job, limit);
+        return sendJson(res, 200, plan);
       }
 
       if (parts.length === 4 && parts[3] === 'video') {
@@ -1433,6 +1448,223 @@ function promoteProjectWinner(
   };
 }
 
+function buildSectionImprovementPlan(job: JobRecord, limit = 3) {
+  const artifacts = artifactsFor(job);
+  const script = loadScriptFromArtifact(artifacts.scriptPath);
+  if (!script) {
+    return {
+      jobId: job.id,
+      outputName: job.outputName,
+      available: false,
+      reason: 'Script artifact missing; run the job first.',
+      recommendations: [] as SectionImprovementRecommendation[],
+    };
+  }
+
+  const quality = readQualityArtifact(job);
+  const scoreMap = new Map<RegenerateSection, {score: number; reasons: Set<string>}>();
+  for (const section of REGENERATE_SECTIONS) {
+    scoreMap.set(section, {score: 0, reasons: new Set()});
+  }
+  const add = (section: RegenerateSection, points: number, reason: string) => {
+    const entry = scoreMap.get(section);
+    if (!entry) return;
+    entry.score += points;
+    entry.reasons.add(reason);
+  };
+
+  const report = quality?.qualityReport;
+  for (const blocker of report?.blockers ?? []) {
+    for (const section of inferSectionsFromIssue(blocker)) {
+      add(section, 12, `Blocker: ${blocker}`);
+    }
+  }
+  for (const warning of report?.warnings ?? []) {
+    for (const section of inferSectionsFromIssue(warning)) {
+      add(section, 6, `Warning: ${warning}`);
+    }
+  }
+
+  const hookParts = [script.hookLine1, script.hookLine2, script.hookKeyword].map((value) => String(value || '').trim());
+  const invalidHookLines = hookParts.filter((part) => {
+    const words = countWords(part);
+    return words < 2 || words > 4;
+  }).length;
+  if (invalidHookLines > 0) add('hook', invalidHookLines * 4, `${invalidHookLines} hook line(s) outside 2-4 words.`);
+  const hookCorpus = hookParts.join(' ');
+  if (/right now|game changer|next level|all in one|revolutionary/i.test(hookCorpus)) {
+    add('hook', 4, 'Hook uses generic hype language.');
+  }
+  if (!script.narrationSegments[0] || !script.narrationSegments[1] || !script.narrationSegments[2]) {
+    add('hook', 8, 'Opening narration segments are incomplete.');
+  }
+
+  if (!script.ctaUrl) {
+    add('cta', 12, 'CTA URL is missing.');
+  } else {
+    const ctaDomain = domainHost(script.ctaUrl);
+    const sourceDomain = domainHost(job.url);
+    if (ctaDomain && sourceDomain && !ctaDomain.includes(sourceDomain) && !sourceDomain.includes(ctaDomain)) {
+      add('cta', 8, `CTA domain (${ctaDomain}) differs from source (${sourceDomain}).`);
+    }
+  }
+  if (!script.narrationSegments[7]) {
+    add('cta', 6, 'Closing narration segment is missing.');
+  }
+
+  const seenFeatureNames = new Set<string>();
+  for (let i = 0; i < 3; i++) {
+    const section = i === 0 ? 'feature1' : i === 1 ? 'feature2' : 'feature3';
+    const feature = script.features[i];
+    if (!feature) {
+      add(section, 12, `Feature ${i + 1} block is missing.`);
+      continue;
+    }
+    const appName = normalizeText(feature.appName);
+    if (!feature.appName) add(section, 9, `Feature ${i + 1} app name is empty.`);
+    if (!feature.caption) add(section, 5, `Feature ${i + 1} caption is empty.`);
+    if (seenFeatureNames.has(appName) && appName) add(section, 5, `Feature ${i + 1} app name duplicates another feature.`);
+    if (appName) seenFeatureNames.add(appName);
+    if (!Array.isArray(feature.demoLines) || feature.demoLines.length === 0) {
+      add(section, 10, `Feature ${i + 1} has no demo lines.`);
+    } else {
+      const joined = feature.demoLines.join(' ');
+      if (countWords(joined) < 6) add(section, 4, `Feature ${i + 1} demo content is thin.`);
+      if (!/\d/.test(joined)) add(section, 2, `Feature ${i + 1} demo has no numeric signal.`);
+    }
+    const narration = script.narrationSegments[3 + i] ?? '';
+    if (appName && !normalizeText(narration).includes(appName.slice(0, Math.max(3, appName.length - 2)))) {
+      add(section, 3, `Narration segment ${4 + i} weakly references feature ${i + 1}.`);
+    }
+  }
+
+  if (!report && job.status === 'completed') {
+    add('hook', 2, 'No quality report found; run Quality Check and improve hook first.');
+  }
+
+  const ranked = [...scoreMap.entries()]
+    .map(([section, value]) => ({section, score: value.score, reasons: [...value.reasons]}))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || REGENERATE_SECTIONS.indexOf(a.section) - REGENERATE_SECTIONS.indexOf(b.section));
+
+  const fallback = ranked.length === 0
+    ? [{
+        section: 'hook' as RegenerateSection,
+        score: 1,
+        reasons: ['No major issues detected. Optional polish starts with hook refresh.'],
+      }]
+    : ranked;
+  const maxScore = Math.max(...fallback.map((item) => item.score), 1);
+  const recommendations: SectionImprovementRecommendation[] = fallback
+    .slice(0, limit)
+    .map((item) => ({
+      section: item.section,
+      priority: item.score,
+      confidence: Number(clamp01(item.score / maxScore).toFixed(2)),
+      impact: item.score >= 18 ? 'high' : item.score >= 10 ? 'medium' : 'low',
+      reasons: item.reasons.slice(0, 4),
+    }));
+
+  return {
+    jobId: job.id,
+    outputName: job.outputName,
+    status: job.status,
+    quality: {
+      score: report?.score ?? null,
+      passed: report?.passed ?? null,
+      blockerCount: Array.isArray(report?.blockers) ? report!.blockers.length : 0,
+      warningCount: Array.isArray(report?.warnings) ? report!.warnings.length : 0,
+    },
+    recommendations,
+  };
+}
+
+function readQualityArtifact(job: JobRecord):
+  | {
+      qualityReport?: {score?: number; passed?: boolean; blockers?: string[]; warnings?: string[]};
+      template?: string;
+      domainPack?: string;
+    }
+  | null {
+  const artifacts = artifactsFor(job);
+  if (!artifacts.qualityPath) return null;
+  const parsed = safeReadJson(artifacts.qualityPath);
+  if (!parsed || typeof parsed !== 'object') return null;
+  return parsed as {
+    qualityReport?: {score?: number; passed?: boolean; blockers?: string[]; warnings?: string[]};
+    template?: string;
+    domainPack?: string;
+  };
+}
+
+function inferSectionsFromIssue(issue: string): RegenerateSection[] {
+  const text = String(issue || '').toLowerCase();
+  const sections = new Set<RegenerateSection>();
+
+  if (text.includes('hook') || text.includes('wordmark narration') || /narration segment [123]\b/.test(text)) {
+    sections.add('hook');
+  }
+  if (text.includes('cta') || text.includes('closing narration')) {
+    sections.add('cta');
+  }
+  if (/feature 1\b/.test(text)) sections.add('feature1');
+  if (/feature 2\b/.test(text)) sections.add('feature2');
+  if (/feature 3\b/.test(text)) sections.add('feature3');
+
+  if (
+    text.includes('feature "') ||
+    text.includes('feature app names') ||
+    text.includes('feature blocks') ||
+    text.includes('feature demos') ||
+    text.includes('script must contain exactly 3 features')
+  ) {
+    sections.add('feature1');
+    sections.add('feature2');
+    sections.add('feature3');
+  }
+
+  if (
+    text.includes('narration must contain exactly 8 scene segments') ||
+    text.includes('placeholder content')
+  ) {
+    sections.add('hook');
+    sections.add('feature1');
+    sections.add('feature2');
+    sections.add('feature3');
+    sections.add('cta');
+  }
+
+  if (
+    text.includes('grounding') ||
+    text.includes('source language') ||
+    text.includes('numeric signals') ||
+    text.includes('domain mismatch term')
+  ) {
+    sections.add('feature1');
+    sections.add('feature2');
+    sections.add('feature3');
+    sections.add('hook');
+  }
+
+  if (sections.size === 0) {
+    sections.add('hook');
+  }
+  return [...sections];
+}
+
+function domainHost(value: string): string {
+  try {
+    const normalized = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+    return new URL(normalized).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+function normalizeText(value: string): string {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 function compareJobs(left: JobRecord, right: JobRecord) {
   const leftArtifacts = artifactsFor(left);
   const rightArtifacts = artifactsFor(right);
@@ -1760,6 +1992,11 @@ function renderHtml() {
             <button id="recommendBest" class="secondary">Recommend Best</button>
             <button id="promoteWinner">Promote Winner</button>
           </div>
+          <div class="row">
+            <button id="recommendFixes" class="secondary">Recommend Next Fixes</button>
+            <button id="applyTopFix" class="secondary">Apply Top Fix</button>
+          </div>
+          <div id="fixPlanBox" class="quality-box muted">No section improvement plan yet.</div>
           <div id="versionsList" class="versions-list muted">No versions loaded yet.</div>
           <div id="recommendationBox" class="quality-box muted">No recommendation yet.</div>
           <div class="field">
@@ -1823,6 +2060,7 @@ function renderHtml() {
   const rootOutputField = document.getElementById('rootOutputName');
   const versionsList = document.getElementById('versionsList');
   const recommendationBox = document.getElementById('recommendationBox');
+  const fixPlanBox = document.getElementById('fixPlanBox');
   const metaTarget = document.getElementById('metaTarget');
   const metaLabel = document.getElementById('metaLabel');
   const metaOutcome = document.getElementById('metaOutcome');
@@ -1838,6 +2076,7 @@ function renderHtml() {
   let currentRootOutputName = '';
   let currentVersions = [];
   let currentRecommendation = null;
+  let currentFixPlan = null;
 
   function setStatus(text, kind='') {
     status.textContent = text;
@@ -2096,6 +2335,42 @@ function renderHtml() {
     return data;
   }
 
+  async function fetchImprovementPlan() {
+    if (!currentId) {
+      currentFixPlan = null;
+      fixPlanBox.className = 'quality-box muted';
+      fixPlanBox.textContent = 'No active job selected yet.';
+      return null;
+    }
+    const res = await fetch('/api/jobs/' + currentId + '/improvement-plan?limit=3');
+    const data = await res.json();
+    if (!res.ok) {
+      currentFixPlan = null;
+      fixPlanBox.className = 'quality-box bad';
+      fixPlanBox.textContent = data.error || 'Improvement plan failed';
+      return null;
+    }
+    currentFixPlan = data;
+    const recs = Array.isArray(data.recommendations) ? data.recommendations : [];
+    if (recs.length === 0) {
+      fixPlanBox.className = 'quality-box muted';
+      fixPlanBox.textContent = 'No section recommendations available yet.';
+      setOutput(data);
+      return data;
+    }
+    const lines = recs.map((item, idx) => {
+      const reason = Array.isArray(item.reasons) && item.reasons[0] ? item.reasons[0] : 'No reason provided';
+      return [
+        (idx + 1) + '. ' + item.section + ' (priority=' + item.priority + ', impact=' + item.impact + ', confidence=' + item.confidence + ')',
+        '   ' + reason,
+      ].join('\\n');
+    });
+    fixPlanBox.className = 'quality-box';
+    fixPlanBox.textContent = lines.join('\\n');
+    setOutput(data);
+    return data;
+  }
+
   async function updateVersionMeta(action, payload) {
     if (!currentRootOutputName) {
       setStatus('No project root selected', 'bad');
@@ -2205,11 +2480,13 @@ function renderHtml() {
       currentJobIdField.value = currentId;
       await refreshVersions();
       await fetchRecommendation();
+      await fetchImprovementPlan();
       clearInterval(timer);
     } else if (data.status === 'failed') {
       setStatus('Failed', 'bad');
       await refreshVersions();
       await fetchRecommendation();
+      await fetchImprovementPlan();
       clearInterval(timer);
     } else {
       setStatus('Running: ' + data.status, 'muted');
@@ -2232,6 +2509,7 @@ function renderHtml() {
     setStatus('Script loaded', 'ok');
     setOutput(data);
     currentJobIdField.value = currentId;
+    await fetchImprovementPlan();
   }
 
   async function saveScriptDraft() {
@@ -2292,6 +2570,7 @@ function renderHtml() {
     if (autofix) {
       await loadScript();
     }
+    await fetchImprovementPlan();
     return data;
   }
 
@@ -2326,6 +2605,52 @@ function renderHtml() {
     return true;
   }
 
+  async function regenerateSection(section) {
+    if (!currentId) {
+      setStatus('No active job selected', 'bad');
+      return false;
+    }
+    const res = await fetch('/api/jobs/' + currentId + '/regenerate', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({section})
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('Regenerate failed', 'bad');
+      setOutput(data);
+      return false;
+    }
+    setStatus('Section regenerated: ' + section, 'ok');
+    setOutput(data);
+    renderQuality({qualityReport: data.quality && data.quality.available ? {score: data.quality.score, minScore: 80, passed: data.quality.passed, blockers: [], warnings: []} : null});
+    await loadScript();
+    await poll();
+    await fetchImprovementPlan();
+    return true;
+  }
+
+  async function applyTopSectionFix() {
+    if (!currentId) {
+      setStatus('No active job selected', 'bad');
+      return false;
+    }
+    if (!currentFixPlan || !Array.isArray(currentFixPlan.recommendations) || currentFixPlan.recommendations.length === 0) {
+      const planned = await fetchImprovementPlan();
+      if (!planned || !Array.isArray(planned.recommendations) || planned.recommendations.length === 0) {
+        setStatus('No top fix available', 'muted');
+        return false;
+      }
+    }
+    const top = currentFixPlan.recommendations[0];
+    if (!top || !top.section) {
+      setStatus('No top fix available', 'muted');
+      return false;
+    }
+    setStatus('Applying top fix: ' + top.section, 'muted');
+    return regenerateSection(top.section);
+  }
+
   document.getElementById('submit').addEventListener('click', async () => {
     const payload = {
       url: document.getElementById('url').value,
@@ -2351,6 +2676,7 @@ function renderHtml() {
     currentId = data.id;
     currentScript = null;
     currentRecommendation = null;
+    currentFixPlan = null;
     setCurrentRoot(data.rootOutputName || '');
     currentJobIdField.value = currentId;
     domainPackField.value = '';
@@ -2358,6 +2684,8 @@ function renderHtml() {
     qualityBox.textContent = 'No quality check yet.';
     recommendationBox.className = 'quality-box muted';
     recommendationBox.textContent = 'No recommendation yet.';
+    fixPlanBox.className = 'quality-box muted';
+    fixPlanBox.textContent = 'No section improvement plan yet.';
     compareBox.className = 'quality-box muted';
     compareBox.textContent = 'No compare run yet.';
     videoLeft.removeAttribute('src');
@@ -2370,27 +2698,8 @@ function renderHtml() {
   });
 
   document.getElementById('regen').addEventListener('click', async () => {
-    if (!currentId) {
-      setStatus('No active job selected', 'bad');
-      return;
-    }
     const section = document.getElementById('section').value;
-    const res = await fetch('/api/jobs/' + currentId + '/regenerate', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({section})
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      setStatus('Regenerate failed', 'bad');
-      setOutput(data);
-      return;
-    }
-    setStatus('Section regenerated: ' + section, 'ok');
-    setOutput(data);
-    renderQuality({qualityReport: data.quality && data.quality.available ? {score: data.quality.score, minScore: 80, passed: data.quality.passed, blockers: [], warnings: []} : null});
-    await loadScript();
-    poll();
+    await regenerateSection(section);
   });
 
   document.getElementById('loadScript').addEventListener('click', loadScript);
@@ -2444,6 +2753,14 @@ function renderHtml() {
   document.getElementById('recommendBest').addEventListener('click', async () => {
     await refreshVersions();
     await fetchRecommendation();
+  });
+
+  document.getElementById('recommendFixes').addEventListener('click', async () => {
+    await fetchImprovementPlan();
+  });
+
+  document.getElementById('applyTopFix').addEventListener('click', async () => {
+    await applyTopSectionFix();
   });
 
   document.getElementById('promoteWinner').addEventListener('click', async () => {

@@ -50,10 +50,12 @@
 - Use `GET /api/projects/:rootOutputName/recommendation` for automated best-version ranking.
 - Use `POST /api/projects/:rootOutputName/version-meta` for label/archive/pin/outcome controls.
 - Use `POST /api/projects/:rootOutputName/promote` to pin the current winner as publish default.
+- Use `GET /api/jobs/:id/improvement-plan` to rank which script section to regenerate first (`hook`, `feature1..3`, `cta`).
 - Use `GET /api/jobs/:id/compare?other=<jobId>` for quick quality/script delta summary.
 - Use `GET /api/jobs/:id/video` for preview playback in local compare panels.
 - Pinning a version now automatically unarchives it; archiving a version automatically unpins it.
 - Recommendation confidence now combines score-gap strength with historical accepted/rejected outcomes.
+- Improvement-plan ranking combines quality issues (warnings/blockers) with script heuristics and should be used before manual regenerate loops.
 
 ## Domain Pack System
 

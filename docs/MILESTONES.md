@@ -455,3 +455,26 @@
     - `set-outcome` updates metadata successfully.
     - `promote` pins the winner and returns promoted version metadata.
     - recommendation returns confidence and updated learning outcome count.
+
+### M29 - Section Auto-Improvement Recommendations + Apply-Top-Fix
+
+- Added section improvement planning endpoint:
+  - `GET /api/jobs/:id/improvement-plan?limit=3`
+  - returns ranked section recommendations for `hook`, `feature1`, `feature2`, `feature3`, `cta`.
+- Improvement scoring now combines:
+  - quality blockers/warnings mapped to impacted sections.
+  - script-level heuristics (hook quality, CTA-domain fit, feature demo strength, narration-feature linkage).
+  - fallback guidance when no major issues are detected.
+- Added local runner controls:
+  - `Recommend Next Fixes` to fetch ranked section plan.
+  - `Apply Top Fix` to regenerate the highest-priority section automatically.
+  - plan panel shows priority, impact, confidence, and reason snippets.
+- Integration behavior:
+  - plan is refreshed after quality checks and after section regeneration.
+  - completed/failed job poll now refreshes section improvement plan alongside recommendation/version data.
+- Validation:
+  - `npx tsc --noEmit` pass.
+  - `npm run check:vision` pass.
+  - local API smoke:
+    - improvement-plan endpoint returns ranked recommendations for existing job.
+    - applying top fix triggers section regenerate and updates plan.

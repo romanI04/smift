@@ -140,7 +140,8 @@ Scope:
     - best-version recommendation and version lifecycle controls are implemented in local runner.
     - recommendation confidence is now tuned against accepted/rejected outcomes.
     - promote-winner workflow is now implemented for one-click publish-default selection.
-    - next priority is section-level auto-improvement recommendations (which section to regenerate first).
+    - section-level auto-improvement recommendations are now implemented (with one-click apply-top-fix flow).
+    - next priority is auto-iteration loop controls (bounded multi-step improve->check->rerender).
 
 ## 5) Non-Negotiable Prioritization Rules
 

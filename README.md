@@ -40,6 +40,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
   - script validate API: `POST /api/jobs/:id/validate-script` with body `{ "autofix": true|false }`
   - rerender API: `POST /api/jobs/:id/rerender` (quality-guarded, renders from existing script artifact without re-scrape)
   - section improvement plan API: `GET /api/jobs/:id/improvement-plan?limit=3` (recommends next section(s) to regenerate)
+  - auto-improve API: `POST /api/jobs/:id/auto-improve` (bounded section iteration loop with stop conditions)
   - version list API: `GET /api/projects/:rootOutputName/versions`
   - recommendation API: `GET /api/projects/:rootOutputName/recommendation`
   - version metadata API: `POST /api/projects/:rootOutputName/version-meta` (actions: `set-label`, `set-archived`, `set-pinned`, `set-outcome`)

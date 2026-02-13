@@ -141,7 +141,8 @@ Scope:
     - recommendation confidence is now tuned against accepted/rejected outcomes.
     - promote-winner workflow is now implemented for one-click publish-default selection.
     - section-level auto-improvement recommendations are now implemented (with one-click apply-top-fix flow).
-    - next priority is auto-iteration loop controls (bounded multi-step improve->check->rerender).
+    - bounded auto-iteration loop controls are now implemented (improve->check cycle with hard stop conditions).
+    - next priority is optional auto-rerender trigger when loop reaches publish threshold.
 
 ## 5) Non-Negotiable Prioritization Rules
 

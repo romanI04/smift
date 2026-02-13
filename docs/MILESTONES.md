@@ -478,3 +478,32 @@
   - local API smoke:
     - improvement-plan endpoint returns ranked recommendations for existing job.
     - applying top fix triggers section regenerate and updates plan.
+
+### M30 - Bounded Auto-Improve Loop (Engine Iteration Control)
+
+- Added bounded multi-step auto-improve API:
+  - `POST /api/jobs/:id/auto-improve`
+  - config controls:
+    - `maxSteps` (1..8)
+    - `targetScore` (70..100)
+    - `maxWarnings` (0..12)
+    - `autofix` (default true)
+- Loop behavior:
+  - each step selects the highest-priority section from improvement-plan ranking.
+  - regenerates section, re-scores quality, optionally applies autofix, persists artifacts.
+  - records per-step deltas (score/blockers/warnings, section, actions, improved flag).
+- Hard stop conditions:
+  - `already-meets-target`
+  - `target-reached`
+  - `max-steps-reached`
+  - `stalled-no-improvement`
+  - `sections-exhausted`
+- Added local runner controls:
+  - auto-improve config inputs (max steps, target score, max warnings, autofix mode)
+  - `Run Auto Improve` button
+  - auto-improve result panel with iteration summary + stop reason.
+- Validation:
+  - `npx tsc --noEmit` pass.
+  - `npm run check:vision` pass.
+  - local API smoke:
+    - `POST /api/jobs/:id/auto-improve` returns bounded iteration payload and stop reason.

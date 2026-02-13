@@ -106,6 +106,36 @@ interface SectionImprovementRecommendation {
   reasons: string[];
 }
 
+interface AutoImproveConfig {
+  maxSteps: number;
+  targetScore: number;
+  maxWarnings: number;
+  strict: boolean;
+  autofix: boolean;
+}
+
+interface AutoImproveIteration {
+  step: number;
+  section: RegenerateSection;
+  before: {
+    score: number;
+    blockers: number;
+    warnings: number;
+    passed: boolean;
+  };
+  after: {
+    score: number;
+    blockers: number;
+    warnings: number;
+    passed: boolean;
+  };
+  improved: boolean;
+  reason: string;
+  planConfidence: number;
+  actions: string[];
+  autofixActions: string[];
+}
+
 const cwd = path.resolve(__dirname, '../..');
 const outDir = path.join(cwd, 'out');
 const jobsDir = path.join(outDir, 'jobs');
@@ -297,6 +327,23 @@ const server = http.createServer(async (req, res) => {
         artifacts: artifactsFor(job),
         actions,
       });
+    }
+
+    if (method === 'POST' && /^\/api\/jobs\/[^/]+\/auto-improve$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const id = parts[2];
+      const job = jobs.get(id);
+      if (!job) return sendJson(res, 404, {error: 'job not found'});
+      if (job.status === 'running' || activeJobId === id) {
+        return sendJson(res, 409, {error: 'job is running; wait until completion'});
+      }
+      const payload = await readJsonBody(req);
+      const config = resolveAutoImproveConfig(payload, job.options.strict);
+      const result = await runAutoImproveLoop(job, config);
+      if (!result.ok) {
+        return sendJson(res, result.code, {error: result.error});
+      }
+      return sendJson(res, 200, result.data);
     }
 
     if (method === 'GET' && /^\/api\/jobs\/[^/]+\/script$/.test(url.pathname)) {
@@ -921,6 +968,293 @@ async function resolveQualityContext(
   };
 }
 
+function resolveAutoImproveConfig(payload: Record<string, unknown>, defaultStrict: boolean): AutoImproveConfig {
+  const strict = payload.strict === undefined ? defaultStrict : Boolean(payload.strict);
+  const defaultMaxWarnings = strict ? 0 : 3;
+  return {
+    maxSteps: clampInt(payload.maxSteps, 1, 8, 3),
+    targetScore: clampInt(payload.targetScore, 70, 100, 90),
+    maxWarnings: clampInt(payload.maxWarnings, 0, 12, defaultMaxWarnings),
+    strict,
+    autofix: payload.autofix === undefined ? true : Boolean(payload.autofix),
+  };
+}
+
+async function runAutoImproveLoop(
+  job: JobRecord,
+  config: AutoImproveConfig,
+): Promise<
+  | {
+      ok: true;
+      data: {
+        id: string;
+        mode: 'auto-improve';
+        config: AutoImproveConfig;
+        stopReason: string;
+        initialQuality: ReturnType<typeof summarizeQualityReport>;
+        finalQuality: ReturnType<typeof summarizeQualityReport>;
+        iterations: AutoImproveIteration[];
+        recommendations: SectionImprovementRecommendation[];
+        quality: ReturnType<typeof qualitySummaryFor>;
+        artifacts: ReturnType<typeof artifactsFor>;
+      };
+    }
+  | {ok: false; code: number; error: string}
+> {
+  const artifacts = artifactsFor(job);
+  if (!artifacts.scriptPath) {
+    return {ok: false, code: 400, error: 'script artifact missing; run job first'};
+  }
+
+  const scriptRaw = safeReadJson(artifacts.scriptPath);
+  if (!scriptRaw) {
+    return {ok: false, code: 500, error: 'script artifact parse failed'};
+  }
+  let script = normalizeScriptPayload(scriptRaw);
+  const existingQuality = artifacts.qualityPath ? safeReadJson(artifacts.qualityPath) : null;
+  const context = await resolveQualityContext(job, script, existingQuality);
+  let qualityReport = scoreScriptQuality({
+    script,
+    scraped: context.scraped,
+    template: context.templateProfile,
+    domainPack: context.domainPack,
+    groundingHints: context.groundingHints,
+    minScore: 80,
+    maxWarnings: config.maxWarnings,
+    failOnWarnings: config.strict,
+  });
+
+  const initialQuality = summarizeQualityReport(qualityReport);
+  const iterations: AutoImproveIteration[] = [];
+  const sectionAttempts = new Map<RegenerateSection, number>();
+  let stalledSteps = 0;
+  let stopReason = '';
+
+  for (let step = 1; step <= config.maxSteps; step++) {
+    if (meetsAutoImproveGoal(qualityReport, config)) {
+      stopReason = step === 1 ? 'already-meets-target' : 'target-reached';
+      break;
+    }
+
+    const plan = buildSectionImprovementPlan(job, 5, {
+      script,
+      quality: {qualityReport},
+      sourceUrl: job.url,
+    });
+    const section = pickAutoImproveSection(plan.recommendations || [], sectionAttempts, 2);
+    if (!section) {
+      stopReason = 'sections-exhausted';
+      break;
+    }
+    const recommendation = plan.recommendations.find((item) => item.section === section) || null;
+    const before = summarizeQualityReport(qualityReport);
+    const regenerated = regenerateScriptSection({
+      script,
+      section,
+      scraped: context.scraped,
+      domainPack: context.domainPack,
+      groundingHints: context.groundingHints,
+    });
+    let nextScript = regenerated.script;
+    let nextQuality = scoreScriptQuality({
+      script: nextScript,
+      scraped: context.scraped,
+      template: context.templateProfile,
+      domainPack: context.domainPack,
+      groundingHints: context.groundingHints,
+      minScore: 80,
+      maxWarnings: config.maxWarnings,
+      failOnWarnings: config.strict,
+    });
+    const actions = [...regenerated.actions];
+    const autofixActions: string[] = [];
+    let generationMode = `auto-improve:${section}:step-${step}`;
+    if (config.autofix && !nextQuality.passed) {
+      const fixed = autoFixScriptQuality(nextScript, context.scraped, context.domainPack, context.groundingHints);
+      nextScript = fixed.script;
+      autofixActions.push(...fixed.actions);
+      if (fixed.actions.length > 0) {
+        actions.push(...fixed.actions.map((item) => `autofix: ${item}`));
+      }
+      nextQuality = scoreScriptQuality({
+        script: nextScript,
+        scraped: context.scraped,
+        template: context.templateProfile,
+        domainPack: context.domainPack,
+        groundingHints: context.groundingHints,
+        minScore: 80,
+        maxWarnings: config.maxWarnings,
+        failOnWarnings: config.strict,
+      });
+      generationMode += '+autofix';
+    }
+
+    script = nextScript;
+    qualityReport = nextQuality;
+    writeScriptAndQualityArtifacts(job, script, context, qualityReport, generationMode, {
+      source: 'auto-improve-loop',
+      step,
+      section,
+      actions,
+      config,
+      recommendation,
+      autofixActions,
+    });
+
+    const after = summarizeQualityReport(qualityReport);
+    const improved = isQualityImproved(before, after);
+    iterations.push({
+      step,
+      section,
+      before,
+      after,
+      improved,
+      reason: recommendation?.reasons?.[0] || 'No reason provided',
+      planConfidence: recommendation?.confidence ?? 0,
+      actions,
+      autofixActions,
+    });
+    sectionAttempts.set(section, (sectionAttempts.get(section) || 0) + 1);
+    appendLog(job, `[auto-improve] step ${step} section=${section} score ${before.score}->${after.score} warnings ${before.warnings}->${after.warnings}`);
+
+    if (meetsAutoImproveGoal(qualityReport, config)) {
+      stopReason = 'target-reached';
+      break;
+    }
+
+    if (!improved) {
+      stalledSteps += 1;
+      if (stalledSteps >= 2) {
+        stopReason = 'stalled-no-improvement';
+        break;
+      }
+    } else {
+      stalledSteps = 0;
+    }
+  }
+
+  if (!stopReason) {
+    stopReason = meetsAutoImproveGoal(qualityReport, config) ? 'target-reached' : 'max-steps-reached';
+  }
+
+  persistJob(job);
+  const finalPlan = buildSectionImprovementPlan(job, 3, {
+    script,
+    quality: {qualityReport},
+    sourceUrl: job.url,
+  });
+  appendLog(job, `[auto-improve] finished: ${stopReason}; score=${qualityReport.score}; blockers=${qualityReport.blockers.length}; warnings=${qualityReport.warnings.length}`);
+
+  return {
+    ok: true,
+    data: {
+      id: job.id,
+      mode: 'auto-improve',
+      config,
+      stopReason,
+      initialQuality,
+      finalQuality: summarizeQualityReport(qualityReport),
+      iterations,
+      recommendations: finalPlan.recommendations || [],
+      quality: qualitySummaryFor(job),
+      artifacts: artifactsFor(job),
+    },
+  };
+}
+
+function writeScriptAndQualityArtifacts(
+  job: JobRecord,
+  script: ScriptResult,
+  context: QualityContext,
+  qualityReport: ReturnType<typeof scoreScriptQuality>,
+  generationMode: string,
+  extra: Record<string, unknown>,
+) {
+  const artifacts = artifactsFor(job);
+  if (artifacts.scriptPath) {
+    fs.writeFileSync(artifacts.scriptPath, JSON.stringify(toPersistedScript(script), null, 2));
+  }
+  if (artifacts.qualityPath) {
+    fs.writeFileSync(
+      artifacts.qualityPath,
+      JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          url: job.url,
+          template: context.templateProfile.id,
+          templateReason: context.templateReason,
+          domainPack: context.domainPack.id,
+          domainPackReason: context.packReason,
+          domainPackConfidence: context.packConfidence,
+          domainPackTopCandidates: context.packTopCandidates,
+          domainPackScores: context.packScores,
+          grounding: summarizeGroundingUsage(script, context.groundingHints),
+          relevanceGuard: {
+            enabled: false,
+            applied: false,
+            actions: [],
+            warnings: [],
+          },
+          generationMode,
+          qualityReport,
+          autoImprove: extra,
+        },
+        null,
+        2,
+      ),
+    );
+  }
+}
+
+function summarizeQualityReport(report: ReturnType<typeof scoreScriptQuality>) {
+  return {
+    score: report.score,
+    blockers: report.blockers.length,
+    warnings: report.warnings.length,
+    passed: report.passed,
+  };
+}
+
+function meetsAutoImproveGoal(
+  report: ReturnType<typeof scoreScriptQuality>,
+  config: AutoImproveConfig,
+): boolean {
+  return report.blockers.length === 0
+    && report.score >= config.targetScore
+    && report.warnings.length <= config.maxWarnings;
+}
+
+function isQualityImproved(
+  before: ReturnType<typeof summarizeQualityReport>,
+  after: ReturnType<typeof summarizeQualityReport>,
+): boolean {
+  if (after.blockers < before.blockers) return true;
+  if (after.warnings < before.warnings) return true;
+  if (after.score > before.score + 0.5) return true;
+  if (!before.passed && after.passed) return true;
+  return false;
+}
+
+function pickAutoImproveSection(
+  recommendations: SectionImprovementRecommendation[],
+  attempts: Map<RegenerateSection, number>,
+  maxAttemptsPerSection: number,
+): RegenerateSection | null {
+  for (const recommendation of recommendations) {
+    const used = attempts.get(recommendation.section) || 0;
+    if (used < maxAttemptsPerSection) {
+      return recommendation.section;
+    }
+  }
+  return null;
+}
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
 function tickQueue() {
   if (activeJobId) return;
   const nextId = queue.shift();
@@ -1448,9 +1782,21 @@ function promoteProjectWinner(
   };
 }
 
-function buildSectionImprovementPlan(job: JobRecord, limit = 3) {
+function buildSectionImprovementPlan(
+  job: JobRecord,
+  limit = 3,
+  input?: {
+    script?: ScriptResult | null;
+    quality?: {
+      qualityReport?: {score?: number; passed?: boolean; blockers?: string[]; warnings?: string[]};
+      template?: string;
+      domainPack?: string;
+    } | null;
+    sourceUrl?: string;
+  },
+) {
   const artifacts = artifactsFor(job);
-  const script = loadScriptFromArtifact(artifacts.scriptPath);
+  const script = input?.script ?? loadScriptFromArtifact(artifacts.scriptPath);
   if (!script) {
     return {
       jobId: job.id,
@@ -1461,7 +1807,7 @@ function buildSectionImprovementPlan(job: JobRecord, limit = 3) {
     };
   }
 
-  const quality = readQualityArtifact(job);
+  const quality = input?.quality ?? readQualityArtifact(job);
   const scoreMap = new Map<RegenerateSection, {score: number; reasons: Set<string>}>();
   for (const section of REGENERATE_SECTIONS) {
     scoreMap.set(section, {score: 0, reasons: new Set()});
@@ -1503,7 +1849,7 @@ function buildSectionImprovementPlan(job: JobRecord, limit = 3) {
     add('cta', 12, 'CTA URL is missing.');
   } else {
     const ctaDomain = domainHost(script.ctaUrl);
-    const sourceDomain = domainHost(job.url);
+    const sourceDomain = domainHost(input?.sourceUrl || job.url);
     if (ctaDomain && sourceDomain && !ctaDomain.includes(sourceDomain) && !sourceDomain.includes(ctaDomain)) {
       add('cta', 8, `CTA domain (${ctaDomain}) differs from source (${sourceDomain}).`);
     }
@@ -1996,7 +2342,18 @@ function renderHtml() {
             <button id="recommendFixes" class="secondary">Recommend Next Fixes</button>
             <button id="applyTopFix" class="secondary">Apply Top Fix</button>
           </div>
+          <div class="row">
+            <input id="autoMaxSteps" type="number" min="1" max="8" value="3" style="width:90px" title="Max auto steps" />
+            <input id="autoTargetScore" type="number" min="70" max="100" value="90" style="width:110px" title="Target score" />
+            <input id="autoMaxWarnings" type="number" min="0" max="12" value="1" style="width:120px" title="Max warnings" />
+            <select id="autoAutofix">
+              <option value="true">autofix on</option>
+              <option value="false">autofix off</option>
+            </select>
+            <button id="runAutoImprove" class="secondary">Run Auto Improve</button>
+          </div>
           <div id="fixPlanBox" class="quality-box muted">No section improvement plan yet.</div>
+          <div id="autoImproveBox" class="quality-box muted">No auto-improve run yet.</div>
           <div id="versionsList" class="versions-list muted">No versions loaded yet.</div>
           <div id="recommendationBox" class="quality-box muted">No recommendation yet.</div>
           <div class="field">
@@ -2061,6 +2418,7 @@ function renderHtml() {
   const versionsList = document.getElementById('versionsList');
   const recommendationBox = document.getElementById('recommendationBox');
   const fixPlanBox = document.getElementById('fixPlanBox');
+  const autoImproveBox = document.getElementById('autoImproveBox');
   const metaTarget = document.getElementById('metaTarget');
   const metaLabel = document.getElementById('metaLabel');
   const metaOutcome = document.getElementById('metaOutcome');
@@ -2651,6 +3009,74 @@ function renderHtml() {
     return regenerateSection(top.section);
   }
 
+  function renderAutoImproveResult(data) {
+    if (!data || !Array.isArray(data.iterations)) {
+      autoImproveBox.className = 'quality-box muted';
+      autoImproveBox.textContent = 'No auto-improve run yet.';
+      return;
+    }
+    const lines = [];
+    lines.push('Stop reason: ' + (data.stopReason || 'n/a'));
+    if (data.initialQuality) {
+      lines.push('Initial: score=' + data.initialQuality.score + ', blockers=' + data.initialQuality.blockers + ', warnings=' + data.initialQuality.warnings);
+    }
+    if (data.finalQuality) {
+      lines.push('Final: score=' + data.finalQuality.score + ', blockers=' + data.finalQuality.blockers + ', warnings=' + data.finalQuality.warnings);
+    }
+    if (data.iterations.length > 0) {
+      lines.push('Iterations:');
+      data.iterations.forEach((item) => {
+        lines.push('  - step ' + item.step + ' [' + item.section + '] ' + item.before.score + ' -> ' + item.after.score + ' (improved=' + item.improved + ')');
+      });
+    }
+    autoImproveBox.className = 'quality-box';
+    autoImproveBox.textContent = lines.join('\\n');
+  }
+
+  async function runAutoImprove() {
+    if (!currentId) {
+      setStatus('No active job selected', 'bad');
+      return null;
+    }
+    const payload = {
+      maxSteps: Number(document.getElementById('autoMaxSteps').value),
+      targetScore: Number(document.getElementById('autoTargetScore').value),
+      maxWarnings: Number(document.getElementById('autoMaxWarnings').value),
+      autofix: document.getElementById('autoAutofix').value === 'true'
+    };
+    setStatus('Running auto improve...', 'muted');
+    const res = await fetch('/api/jobs/' + currentId + '/auto-improve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      autoImproveBox.className = 'quality-box bad';
+      autoImproveBox.textContent = data.error || 'Auto improve failed';
+      setStatus('Auto improve failed', 'bad');
+      setOutput(data);
+      return null;
+    }
+    renderAutoImproveResult(data);
+    setOutput(data);
+    if (data.finalQuality) {
+      renderQuality({
+        qualityReport: {
+          score: data.finalQuality.score,
+          minScore: 80,
+          passed: data.finalQuality.passed,
+          blockers: [],
+          warnings: []
+        }
+      });
+    }
+    await loadScript();
+    await fetchImprovementPlan();
+    setStatus('Auto improve finished: ' + (data.stopReason || 'done'), 'ok');
+    return data;
+  }
+
   document.getElementById('submit').addEventListener('click', async () => {
     const payload = {
       url: document.getElementById('url').value,
@@ -2686,6 +3112,8 @@ function renderHtml() {
     recommendationBox.textContent = 'No recommendation yet.';
     fixPlanBox.className = 'quality-box muted';
     fixPlanBox.textContent = 'No section improvement plan yet.';
+    autoImproveBox.className = 'quality-box muted';
+    autoImproveBox.textContent = 'No auto-improve run yet.';
     compareBox.className = 'quality-box muted';
     compareBox.textContent = 'No compare run yet.';
     videoLeft.removeAttribute('src');
@@ -2761,6 +3189,10 @@ function renderHtml() {
 
   document.getElementById('applyTopFix').addEventListener('click', async () => {
     await applyTopSectionFix();
+  });
+
+  document.getElementById('runAutoImprove').addEventListener('click', async () => {
+    await runAutoImprove();
   });
 
   document.getElementById('promoteWinner').addEventListener('click', async () => {

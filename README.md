@@ -43,6 +43,7 @@ Paste a URL, generate a structured script with quality checks, produce narration
   - auto-improve API: `POST /api/jobs/:id/auto-improve` (bounded section iteration loop with stop conditions; optional auto-rerender + auto-promote-if-winner on target)
   - version list API: `GET /api/projects/:rootOutputName/versions`
   - recommendation API: `GET /api/projects/:rootOutputName/recommendation`
+  - automation audit API: `GET /api/projects/:rootOutputName/audit?limit=20`
   - version metadata API: `POST /api/projects/:rootOutputName/version-meta` (actions: `set-label`, `set-archived`, `set-pinned`, `set-outcome`)
   - promote winner API: `POST /api/projects/:rootOutputName/promote` (pins recommended winner and marks publish candidate)
   - compare API: `GET /api/jobs/:id/compare?other=<jobId>`

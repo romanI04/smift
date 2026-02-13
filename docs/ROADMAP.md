@@ -144,7 +144,8 @@ Scope:
     - bounded auto-iteration loop controls are now implemented (improve->check cycle with hard stop conditions).
     - optional auto-rerender trigger on publish-threshold is now implemented.
     - auto-promote-if-winner after auto-rerender is now implemented.
-    - next priority is background watch mode for rerender completion + richer promotion audit trail.
+    - background watch mode + persistent promotion audit trail are now implemented.
+    - next priority is configurable promotion policy thresholds (e.g. minimum confidence before auto-promote).
 
 ## 5) Non-Negotiable Prioritization Rules
 

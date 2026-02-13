@@ -544,3 +544,26 @@
   - local API smoke:
     - auto-improve accepts `autoPromoteIfWinner`.
     - rerender job metadata includes `autoPromoteIfWinner`.
+
+### M33 - Promotion Audit Trail + Watchdog Recovery
+
+- Added persistent project-level audit log:
+  - stored at `out/<rootOutputName>-audit.json`
+  - records:
+    - rerender queue events
+    - auto-promote promoted/skipped/failed outcomes
+    - reason + lightweight details (status/recommended winner/source)
+- Added audit API:
+  - `GET /api/projects/:rootOutputName/audit?limit=20`
+- Added watchdog recovery behavior:
+  - startup pass and periodic watchdog evaluate pending rerender auto-promote jobs not yet finalized.
+  - finalized decisions persist on job options (`autoPromoteEvaluatedAt`, `autoPromoteDecision`) to avoid reprocessing.
+- Updated local runner:
+  - `Refresh Audit` button
+  - audit panel showing recent automation events for current project root.
+- Validation:
+  - `npx tsc --noEmit` pass.
+  - `npm run check:vision` pass.
+  - local API smoke:
+    - audit endpoint returns entries.
+    - auto-improve rerender queue events are written into audit log.

@@ -44,6 +44,8 @@ interface JobRecord {
       scriptPath?: string;
       sourceJobId?: string;
       autoPromoteIfWinner?: boolean;
+      autoPromoteEvaluatedAt?: string;
+      autoPromoteDecision?: string;
     };
   logs: string[];
 }
@@ -140,6 +142,22 @@ interface AutoImproveIteration {
   autofixActions: string[];
 }
 
+interface ProjectAuditEntry {
+  at: string;
+  type: 'rerender-queued' | 'autopromote-promoted' | 'autopromote-skipped' | 'autopromote-failed';
+  rootOutputName: string;
+  jobId: string;
+  sourceJobId: string | null;
+  reason: string;
+  details?: Record<string, unknown>;
+}
+
+interface ProjectAuditLog {
+  rootOutputName: string;
+  updatedAt: string;
+  entries: ProjectAuditEntry[];
+}
+
 const cwd = path.resolve(__dirname, '../..');
 const outDir = path.join(cwd, 'out');
 const jobsDir = path.join(outDir, 'jobs');
@@ -151,6 +169,10 @@ const queue: string[] = [];
 let activeJobId: string | null = null;
 const REGENERATE_SECTIONS: RegenerateSection[] = ['hook', 'feature1', 'feature2', 'feature3', 'cta'];
 loadPersistedJobs();
+evaluatePendingAutoPromoteJobs('startup');
+setInterval(() => {
+  evaluatePendingAutoPromoteJobs('watchdog');
+}, 30000).unref();
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -604,6 +626,21 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
+    if (method === 'GET' && /^\/api\/projects\/[^/]+\/audit$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const rootOutputName = decodeURIComponent(parts[2] || '');
+      if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
+      if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
+      const rawLimit = Number(url.searchParams.get('limit') || 50);
+      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, Math.floor(rawLimit))) : 50;
+      const audit = readProjectAudit(rootOutputName);
+      return sendJson(res, 200, {
+        rootOutputName,
+        updatedAt: audit.updatedAt,
+        entries: audit.entries.slice(0, limit),
+      });
+    }
+
     if (method === 'POST' && /^\/api\/projects\/[^/]+\/promote$/.test(url.pathname)) {
       const parts = url.pathname.split('/').filter(Boolean);
       const rootOutputName = decodeURIComponent(parts[2] || '');
@@ -993,6 +1030,22 @@ function queueVersionedRerenderFromScript(args: {
   queue.push(rerenderJob.id);
   persistJob(rerenderJob);
   appendLog(job, `[rerender] queued rerender job ${rerenderJob.id} (${outputName}) via ${versioningSource}`);
+  appendProjectAudit(rootOutputName, {
+    type: 'rerender-queued',
+    jobId: rerenderJob.id,
+    sourceJobId: job.id,
+    reason: `Queued rerender via ${versioningSource}`,
+    details: {
+      outputName,
+      version,
+      generationMode,
+      qualityScore: qualityReport.score,
+      warningCount: qualityReport.warnings.length,
+      blockerCount: qualityReport.blockers.length,
+      strict: rerenderJob.options.strict,
+      autoPromoteIfWinner: Boolean(rerenderJob.options.autoPromoteIfWinner),
+    },
+  });
   tickQueue();
 
   return {
@@ -1374,36 +1427,104 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
   return Math.min(max, Math.max(min, Math.round(parsed)));
 }
 
-function tryAutoPromoteIfRerenderWinner(job: JobRecord) {
+function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watchdog' | 'startup' = 'close') {
   if (job.options.mode !== 'rerender') return;
   if (!job.options.autoPromoteIfWinner) return;
+  if (job.options.autoPromoteEvaluatedAt) return;
+
+  const now = new Date().toISOString();
+  const rootOutputName = getRootOutputName(job);
+  const sourceJobId = job.options.sourceJobId ?? null;
+  const markEvaluation = (decision: string) => {
+    job.options.autoPromoteDecision = decision;
+    job.options.autoPromoteEvaluatedAt = now;
+    persistJob(job);
+  };
+
   if (job.status !== 'completed') {
-    appendLog(job, '[autopromote] skipped: rerender did not complete successfully');
+    const reason = 'rerender did not complete successfully';
+    appendLog(job, `[autopromote] skipped: ${reason}`);
+    appendProjectAudit(rootOutputName, {
+      type: 'autopromote-skipped',
+      jobId: job.id,
+      sourceJobId,
+      reason,
+      details: {status: job.status, source},
+    });
+    markEvaluation(`skipped:${reason}`);
     return;
   }
-  const rootOutputName = getRootOutputName(job);
+
   const recommendation = recommendProjectVersion(rootOutputName);
   const recommendedId = recommendation.recommended?.id || null;
   if (!recommendedId) {
-    appendLog(job, '[autopromote] skipped: no recommendation available');
+    const reason = 'no recommendation available';
+    appendLog(job, `[autopromote] skipped: ${reason}`);
+    appendProjectAudit(rootOutputName, {
+      type: 'autopromote-skipped',
+      jobId: job.id,
+      sourceJobId,
+      reason,
+      details: {source},
+    });
+    markEvaluation(`skipped:${reason}`);
     return;
   }
   if (recommendedId !== job.id) {
-    appendLog(job, `[autopromote] skipped: winner is ${recommendedId}, not this rerender`);
+    const reason = `winner is ${recommendedId}, not this rerender`;
+    appendLog(job, `[autopromote] skipped: ${reason}`);
+    appendProjectAudit(rootOutputName, {
+      type: 'autopromote-skipped',
+      jobId: job.id,
+      sourceJobId,
+      reason,
+      details: {recommendedId, source},
+    });
+    markEvaluation(`skipped:${reason}`);
     return;
   }
+
   const promoted = promoteProjectWinner(rootOutputName, job.id);
   if (!promoted.ok) {
     appendLog(job, `[autopromote] failed: ${promoted.error}`);
+    appendProjectAudit(rootOutputName, {
+      type: 'autopromote-failed',
+      jobId: job.id,
+      sourceJobId,
+      reason: promoted.error,
+      details: {source},
+    });
+    markEvaluation(`failed:${promoted.error}`);
     return;
   }
   appendLog(job, `[autopromote] promoted v${promoted.promoted.version} (${promoted.promoted.id})`);
-  const sourceJobId = job.options.sourceJobId;
+  appendProjectAudit(rootOutputName, {
+    type: 'autopromote-promoted',
+    jobId: job.id,
+    sourceJobId,
+    reason: 'rerender became winner and was promoted',
+    details: {
+      promotedVersion: promoted.promoted.version,
+      promotedId: promoted.promoted.id,
+      source,
+    },
+  });
+  markEvaluation('promoted');
   if (sourceJobId) {
     const sourceJob = jobs.get(sourceJobId);
     if (sourceJob) {
       appendLog(sourceJob, `[autopromote] promoted rerender winner ${promoted.promoted.id}`);
     }
+  }
+}
+
+function evaluatePendingAutoPromoteJobs(source: 'watchdog' | 'startup') {
+  for (const job of jobs.values()) {
+    if (job.options.mode !== 'rerender') continue;
+    if (!job.options.autoPromoteIfWinner) continue;
+    if (job.options.autoPromoteEvaluatedAt) continue;
+    if (job.status !== 'completed' && job.status !== 'failed') continue;
+    tryAutoPromoteIfRerenderWinner(job, source);
   }
 }
 
@@ -1585,6 +1706,54 @@ function readVersionMetadata(rootOutputName: string): VersionMetadata {
 function writeVersionMetadata(rootOutputName: string, metadata: VersionMetadata) {
   const filePath = metadataPathForRoot(rootOutputName);
   fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2));
+}
+
+function auditPathForRoot(rootOutputName: string): string {
+  return path.join(outDir, `${rootOutputName}-audit.json`);
+}
+
+function readProjectAudit(rootOutputName: string): ProjectAuditLog {
+  const filePath = auditPathForRoot(rootOutputName);
+  const parsed = safeReadJson(filePath);
+  if (
+    parsed
+    && typeof parsed === 'object'
+    && typeof parsed.rootOutputName === 'string'
+    && Array.isArray(parsed.entries)
+  ) {
+    return {
+      rootOutputName: String(parsed.rootOutputName),
+      updatedAt: String(parsed.updatedAt || ''),
+      entries: (parsed.entries as ProjectAuditEntry[])
+        .filter((item) => item && typeof item === 'object' && typeof item.at === 'string' && typeof item.type === 'string')
+        .sort((a, b) => b.at.localeCompare(a.at)),
+    };
+  }
+  return {
+    rootOutputName,
+    updatedAt: new Date(0).toISOString(),
+    entries: [],
+  };
+}
+
+function writeProjectAudit(rootOutputName: string, audit: ProjectAuditLog) {
+  const filePath = auditPathForRoot(rootOutputName);
+  fs.writeFileSync(filePath, JSON.stringify(audit, null, 2));
+}
+
+function appendProjectAudit(rootOutputName: string, entry: Omit<ProjectAuditEntry, 'rootOutputName' | 'at'> & {at?: string}) {
+  const audit = readProjectAudit(rootOutputName);
+  const at = entry.at || new Date().toISOString();
+  audit.entries.unshift({
+    ...entry,
+    rootOutputName,
+    at,
+  });
+  if (audit.entries.length > 250) {
+    audit.entries = audit.entries.slice(0, 250);
+  }
+  audit.updatedAt = at;
+  writeProjectAudit(rootOutputName, audit);
 }
 
 function listProjectVersions(rootOutputName: string): ProjectVersion[] {
@@ -2519,6 +2688,10 @@ function renderHtml() {
           </div>
           <div id="fixPlanBox" class="quality-box muted">No section improvement plan yet.</div>
           <div id="autoImproveBox" class="quality-box muted">No auto-improve run yet.</div>
+          <div class="row">
+            <button id="refreshAudit" class="secondary">Refresh Audit</button>
+          </div>
+          <div id="auditBox" class="quality-box muted">No automation audit yet.</div>
           <div id="versionsList" class="versions-list muted">No versions loaded yet.</div>
           <div id="recommendationBox" class="quality-box muted">No recommendation yet.</div>
           <div class="field">
@@ -2584,6 +2757,7 @@ function renderHtml() {
   const recommendationBox = document.getElementById('recommendationBox');
   const fixPlanBox = document.getElementById('fixPlanBox');
   const autoImproveBox = document.getElementById('autoImproveBox');
+  const auditBox = document.getElementById('auditBox');
   const metaTarget = document.getElementById('metaTarget');
   const metaLabel = document.getElementById('metaLabel');
   const metaOutcome = document.getElementById('metaOutcome');
@@ -2858,6 +3032,35 @@ function renderHtml() {
     return data;
   }
 
+  async function fetchAudit() {
+    if (!currentRootOutputName) {
+      auditBox.className = 'quality-box muted';
+      auditBox.textContent = 'No project root selected yet.';
+      return null;
+    }
+    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/audit?limit=20');
+    const data = await res.json();
+    if (!res.ok) {
+      auditBox.className = 'quality-box bad';
+      auditBox.textContent = data.error || 'Audit fetch failed';
+      return null;
+    }
+    const entries = Array.isArray(data.entries) ? data.entries : [];
+    if (entries.length === 0) {
+      auditBox.className = 'quality-box muted';
+      auditBox.textContent = 'No automation audit yet.';
+      return data;
+    }
+    const lines = entries.slice(0, 8).map((item, idx) => {
+      const when = String(item.at || '').replace('T', ' ').replace('Z', 'Z');
+      const source = item.sourceJobId ? (' source=' + item.sourceJobId) : '';
+      return (idx + 1) + '. [' + when + '] ' + item.type + ' job=' + item.jobId + source + ' :: ' + item.reason;
+    });
+    auditBox.className = 'quality-box';
+    auditBox.textContent = lines.join('\\n');
+    return data;
+  }
+
   async function fetchImprovementPlan() {
     if (!currentId) {
       currentFixPlan = null;
@@ -3004,12 +3207,14 @@ function renderHtml() {
       await refreshVersions();
       await fetchRecommendation();
       await fetchImprovementPlan();
+      await fetchAudit();
       clearInterval(timer);
     } else if (data.status === 'failed') {
       setStatus('Failed', 'bad');
       await refreshVersions();
       await fetchRecommendation();
       await fetchImprovementPlan();
+      await fetchAudit();
       clearInterval(timer);
     } else {
       setStatus('Running: ' + data.status, 'muted');
@@ -3033,6 +3238,7 @@ function renderHtml() {
     setOutput(data);
     currentJobIdField.value = currentId;
     await fetchImprovementPlan();
+    await fetchAudit();
   }
 
   async function saveScriptDraft() {
@@ -3245,6 +3451,7 @@ function renderHtml() {
     }
     await loadScript();
     await fetchImprovementPlan();
+    await fetchAudit();
     if (data.rerender && data.rerender.queued && data.rerender.id) {
       currentId = data.rerender.id;
       currentJobIdField.value = currentId;
@@ -3296,6 +3503,8 @@ function renderHtml() {
     fixPlanBox.textContent = 'No section improvement plan yet.';
     autoImproveBox.className = 'quality-box muted';
     autoImproveBox.textContent = 'No auto-improve run yet.';
+    auditBox.className = 'quality-box muted';
+    auditBox.textContent = 'No automation audit yet.';
     compareBox.className = 'quality-box muted';
     compareBox.textContent = 'No compare run yet.';
     videoLeft.removeAttribute('src');
@@ -3365,6 +3574,10 @@ function renderHtml() {
     await fetchRecommendation();
   });
 
+  document.getElementById('refreshAudit').addEventListener('click', async () => {
+    await fetchAudit();
+  });
+
   document.getElementById('recommendFixes').addEventListener('click', async () => {
     await fetchImprovementPlan();
   });
@@ -3383,6 +3596,7 @@ function renderHtml() {
     if (!result) return;
     setStatus('Promoted winner: v' + result.promoted.version + ' · ' + result.promoted.id, 'ok');
     await fetchRecommendation();
+    await fetchAudit();
   });
 
   document.getElementById('saveLabel').addEventListener('click', async () => {

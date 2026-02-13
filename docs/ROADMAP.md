@@ -142,7 +142,8 @@ Scope:
     - promote-winner workflow is now implemented for one-click publish-default selection.
     - section-level auto-improvement recommendations are now implemented (with one-click apply-top-fix flow).
     - bounded auto-iteration loop controls are now implemented (improve->check cycle with hard stop conditions).
-    - next priority is optional auto-rerender trigger when loop reaches publish threshold.
+    - optional auto-rerender trigger on publish-threshold is now implemented.
+    - next priority is auto-promote candidate when rerender result wins recommendation.
 
 ## 5) Non-Negotiable Prioritization Rules
 

@@ -507,3 +507,22 @@
   - `npm run check:vision` pass.
   - local API smoke:
     - `POST /api/jobs/:id/auto-improve` returns bounded iteration payload and stop reason.
+
+### M31 - Auto-Rerender Trigger After Auto-Improve Target
+
+- Extended auto-improve config with publish-threshold render trigger:
+  - `autoRerender` (boolean, default false)
+  - `rerenderStrict` (boolean, defaults to auto-improve strict mode)
+- Added shared rerender queue helper so manual rerender and auto-improve rerender use the same versioned artifact path.
+- Auto-improve now:
+  - queues a versioned rerender job automatically when quality goals are met and `autoRerender=true`.
+  - returns rerender status metadata (`queued`, `id`, `version`, reason when skipped).
+- Updated local runner controls:
+  - `auto rerender on target` toggle
+  - rerender strictness toggle for queued render
+  - auto-improve result box now shows rerender queue outcome.
+- Validation:
+  - `npx tsc --noEmit` pass.
+  - `npm run check:vision` pass.
+  - local API smoke:
+    - `POST /api/jobs/:id/auto-improve` returns rerender metadata and queues render when enabled and target reached.

@@ -112,6 +112,8 @@ interface AutoImproveConfig {
   maxWarnings: number;
   strict: boolean;
   autofix: boolean;
+  autoRerender: boolean;
+  rerenderStrict: boolean;
 }
 
 interface AutoImproveIteration {
@@ -556,68 +558,24 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
-      const rootOutputName = getRootOutputName(job);
-      const version = nextVersionForRoot(rootOutputName);
-      const outputName = outputNameForVersion(rootOutputName, version);
-      const versionedScriptPath = path.join(outDir, `${outputName}-script.json`);
-      fs.writeFileSync(versionedScriptPath, JSON.stringify(toPersistedScript(script), null, 2));
-
-      const versionedQualityPath = path.join(outDir, `${outputName}-quality.json`);
-      fs.writeFileSync(
-        versionedQualityPath,
-        JSON.stringify(
-          {
-            generatedAt: new Date().toISOString(),
-            url: job.url,
-            template: context.templateProfile.id,
-            templateReason: context.templateReason,
-            domainPack: context.domainPack.id,
-            domainPackReason: context.packReason,
-            domainPackConfidence: context.packConfidence,
-            domainPackTopCandidates: context.packTopCandidates,
-            domainPackScores: context.packScores,
-            grounding: summarizeGroundingUsage(script, context.groundingHints),
-            relevanceGuard: {
-              enabled: false,
-              applied: false,
-              actions: [],
-              warnings: [],
-            },
-            generationMode: 'manual-edit-validation',
-            qualityReport,
-            versioning: {
-              rootOutputName,
-              version,
-              sourceJobId: job.id,
-            },
-          },
-          null,
-          2,
-        ),
-      );
-
-      const rerenderJob = createRerenderJob(
+      const queued = queueVersionedRerenderFromScript({
         job,
-        versionedScriptPath,
+        script,
+        context,
+        qualityReport,
         payload,
-        outputName,
-        rootOutputName,
-        version,
-      );
-      jobs.set(rerenderJob.id, rerenderJob);
-      queue.push(rerenderJob.id);
-      persistJob(rerenderJob);
-      appendLog(job, `[rerender] queued rerender job ${rerenderJob.id} (${outputName})`);
-      tickQueue();
+        generationMode: 'manual-edit-validation',
+        versioningSource: 'manual-rerender',
+      });
 
       return sendJson(res, 201, {
-        id: rerenderJob.id,
+        id: queued.rerenderJob.id,
         sourceJobId: job.id,
-        status: rerenderJob.status,
-        mode: rerenderJob.options.mode,
-        outputName,
-        rootOutputName,
-        version,
+        status: queued.rerenderJob.status,
+        mode: queued.rerenderJob.options.mode,
+        outputName: queued.outputName,
+        rootOutputName: queued.rootOutputName,
+        version: queued.version,
       });
     }
 
@@ -968,6 +926,81 @@ async function resolveQualityContext(
   };
 }
 
+function queueVersionedRerenderFromScript(args: {
+  job: JobRecord;
+  script: ScriptResult;
+  context: QualityContext;
+  qualityReport: ReturnType<typeof scoreScriptQuality>;
+  payload: Record<string, unknown>;
+  generationMode: string;
+  versioningSource: string;
+}) {
+  const {job, script, context, qualityReport, payload, generationMode, versioningSource} = args;
+  const rootOutputName = getRootOutputName(job);
+  const version = nextVersionForRoot(rootOutputName);
+  const outputName = outputNameForVersion(rootOutputName, version);
+  const versionedScriptPath = path.join(outDir, `${outputName}-script.json`);
+  fs.writeFileSync(versionedScriptPath, JSON.stringify(toPersistedScript(script), null, 2));
+
+  const versionedQualityPath = path.join(outDir, `${outputName}-quality.json`);
+  fs.writeFileSync(
+    versionedQualityPath,
+    JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        url: job.url,
+        template: context.templateProfile.id,
+        templateReason: context.templateReason,
+        domainPack: context.domainPack.id,
+        domainPackReason: context.packReason,
+        domainPackConfidence: context.packConfidence,
+        domainPackTopCandidates: context.packTopCandidates,
+        domainPackScores: context.packScores,
+        grounding: summarizeGroundingUsage(script, context.groundingHints),
+        relevanceGuard: {
+          enabled: false,
+          applied: false,
+          actions: [],
+          warnings: [],
+        },
+        generationMode,
+        qualityReport,
+        versioning: {
+          rootOutputName,
+          version,
+          sourceJobId: job.id,
+          source: versioningSource,
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const rerenderJob = createRerenderJob(
+    job,
+    versionedScriptPath,
+    payload,
+    outputName,
+    rootOutputName,
+    version,
+  );
+  jobs.set(rerenderJob.id, rerenderJob);
+  queue.push(rerenderJob.id);
+  persistJob(rerenderJob);
+  appendLog(job, `[rerender] queued rerender job ${rerenderJob.id} (${outputName}) via ${versioningSource}`);
+  tickQueue();
+
+  return {
+    rerenderJob,
+    outputName,
+    rootOutputName,
+    version,
+    versionedScriptPath,
+    versionedQualityPath,
+  };
+}
+
 function resolveAutoImproveConfig(payload: Record<string, unknown>, defaultStrict: boolean): AutoImproveConfig {
   const strict = payload.strict === undefined ? defaultStrict : Boolean(payload.strict);
   const defaultMaxWarnings = strict ? 0 : 3;
@@ -977,6 +1010,8 @@ function resolveAutoImproveConfig(payload: Record<string, unknown>, defaultStric
     maxWarnings: clampInt(payload.maxWarnings, 0, 12, defaultMaxWarnings),
     strict,
     autofix: payload.autofix === undefined ? true : Boolean(payload.autofix),
+    autoRerender: payload.autoRerender === undefined ? false : Boolean(payload.autoRerender),
+    rerenderStrict: payload.rerenderStrict === undefined ? strict : Boolean(payload.rerenderStrict),
   };
 }
 
@@ -995,6 +1030,14 @@ async function runAutoImproveLoop(
         finalQuality: ReturnType<typeof summarizeQualityReport>;
         iterations: AutoImproveIteration[];
         recommendations: SectionImprovementRecommendation[];
+        rerender: {
+          queued: boolean;
+          reason: string;
+          id: string | null;
+          outputName: string | null;
+          rootOutputName: string | null;
+          version: number | null;
+        };
         quality: ReturnType<typeof qualitySummaryFor>;
         artifacts: ReturnType<typeof artifactsFor>;
       };
@@ -1029,6 +1072,21 @@ async function runAutoImproveLoop(
   const sectionAttempts = new Map<RegenerateSection, number>();
   let stalledSteps = 0;
   let stopReason = '';
+  let rerenderResult: {
+    queued: boolean;
+    reason: string;
+    id: string | null;
+    outputName: string | null;
+    rootOutputName: string | null;
+    version: number | null;
+  } = {
+    queued: false,
+    reason: 'disabled',
+    id: null,
+    outputName: null,
+    rootOutputName: null,
+    version: null,
+  };
 
   for (let step = 1; step <= config.maxSteps; step++) {
     if (meetsAutoImproveGoal(qualityReport, config)) {
@@ -1137,13 +1195,59 @@ async function runAutoImproveLoop(
     stopReason = meetsAutoImproveGoal(qualityReport, config) ? 'target-reached' : 'max-steps-reached';
   }
 
+  const goalMet = meetsAutoImproveGoal(qualityReport, config);
+  if (config.autoRerender && goalMet) {
+    const queued = queueVersionedRerenderFromScript({
+      job,
+      script,
+      context,
+      qualityReport,
+      payload: {
+        strict: config.rerenderStrict,
+        quality: job.options.quality,
+        voice: job.options.voice,
+      },
+      generationMode: 'auto-improve-validation',
+      versioningSource: 'auto-improve',
+    });
+    rerenderResult = {
+      queued: true,
+      reason: 'queued-after-target',
+      id: queued.rerenderJob.id,
+      outputName: queued.outputName,
+      rootOutputName: queued.rootOutputName,
+      version: queued.version,
+    };
+  } else if (!config.autoRerender) {
+    rerenderResult = {
+      queued: false,
+      reason: 'disabled',
+      id: null,
+      outputName: null,
+      rootOutputName: null,
+      version: null,
+    };
+  } else {
+    rerenderResult = {
+      queued: false,
+      reason: 'target-not-reached',
+      id: null,
+      outputName: null,
+      rootOutputName: null,
+      version: null,
+    };
+  }
+
   persistJob(job);
   const finalPlan = buildSectionImprovementPlan(job, 3, {
     script,
     quality: {qualityReport},
     sourceUrl: job.url,
   });
-  appendLog(job, `[auto-improve] finished: ${stopReason}; score=${qualityReport.score}; blockers=${qualityReport.blockers.length}; warnings=${qualityReport.warnings.length}`);
+  appendLog(
+    job,
+    `[auto-improve] finished: ${stopReason}; score=${qualityReport.score}; blockers=${qualityReport.blockers.length}; warnings=${qualityReport.warnings.length}; rerender=${rerenderResult.queued ? rerenderResult.id : rerenderResult.reason}`,
+  );
 
   return {
     ok: true,
@@ -1156,6 +1260,7 @@ async function runAutoImproveLoop(
       finalQuality: summarizeQualityReport(qualityReport),
       iterations,
       recommendations: finalPlan.recommendations || [],
+      rerender: rerenderResult,
       quality: qualitySummaryFor(job),
       artifacts: artifactsFor(job),
     },
@@ -2350,6 +2455,14 @@ function renderHtml() {
               <option value="true">autofix on</option>
               <option value="false">autofix off</option>
             </select>
+            <select id="autoRerender">
+              <option value="false">no auto rerender</option>
+              <option value="true">auto rerender on target</option>
+            </select>
+            <select id="autoRerenderStrict">
+              <option value="true">rerender strict</option>
+              <option value="false">rerender standard</option>
+            </select>
             <button id="runAutoImprove" class="secondary">Run Auto Improve</button>
           </div>
           <div id="fixPlanBox" class="quality-box muted">No section improvement plan yet.</div>
@@ -3023,6 +3136,9 @@ function renderHtml() {
     if (data.finalQuality) {
       lines.push('Final: score=' + data.finalQuality.score + ', blockers=' + data.finalQuality.blockers + ', warnings=' + data.finalQuality.warnings);
     }
+    if (data.rerender) {
+      lines.push('Rerender: ' + (data.rerender.queued ? ('queued ' + data.rerender.id + ' (v' + data.rerender.version + ')') : data.rerender.reason));
+    }
     if (data.iterations.length > 0) {
       lines.push('Iterations:');
       data.iterations.forEach((item) => {
@@ -3042,7 +3158,9 @@ function renderHtml() {
       maxSteps: Number(document.getElementById('autoMaxSteps').value),
       targetScore: Number(document.getElementById('autoTargetScore').value),
       maxWarnings: Number(document.getElementById('autoMaxWarnings').value),
-      autofix: document.getElementById('autoAutofix').value === 'true'
+      autofix: document.getElementById('autoAutofix').value === 'true',
+      autoRerender: document.getElementById('autoRerender').value === 'true',
+      rerenderStrict: document.getElementById('autoRerenderStrict').value === 'true'
     };
     setStatus('Running auto improve...', 'muted');
     const res = await fetch('/api/jobs/' + currentId + '/auto-improve', {
@@ -3073,6 +3191,16 @@ function renderHtml() {
     }
     await loadScript();
     await fetchImprovementPlan();
+    if (data.rerender && data.rerender.queued && data.rerender.id) {
+      currentId = data.rerender.id;
+      currentJobIdField.value = currentId;
+      setStatus('Auto improve queued rerender: ' + data.rerender.id, 'ok');
+      await refreshVersions();
+      if (timer) clearInterval(timer);
+      timer = setInterval(poll, 2000);
+      poll();
+      return data;
+    }
     setStatus('Auto improve finished: ' + (data.stopReason || 'done'), 'ok');
     return data;
   }

@@ -44,10 +44,15 @@ interface JobRecord {
       scriptPath?: string;
       sourceJobId?: string;
       autoPromoteIfWinner?: boolean;
+      autoPromoteMinConfidence?: number;
       autoPromoteEvaluatedAt?: string;
       autoPromoteDecision?: string;
     };
   logs: string[];
+}
+
+interface AutoPromotePolicy {
+  minConfidence: number;
 }
 
 interface VersionMetaEntry {
@@ -64,6 +69,7 @@ interface VersionMetadata {
   rootOutputName: string;
   updatedAt: string;
   entries: Record<string, VersionMetaEntry>;
+  promotionPolicy: AutoPromotePolicy;
 }
 
 interface ProjectVersion {
@@ -118,6 +124,7 @@ interface AutoImproveConfig {
   autoRerender: boolean;
   rerenderStrict: boolean;
   autoPromoteIfWinner: boolean;
+  autoPromoteMinConfidence: number;
 }
 
 interface AutoImproveIteration {
@@ -144,7 +151,7 @@ interface AutoImproveIteration {
 
 interface ProjectAuditEntry {
   at: string;
-  type: 'rerender-queued' | 'autopromote-promoted' | 'autopromote-skipped' | 'autopromote-failed';
+  type: 'rerender-queued' | 'autopromote-promoted' | 'autopromote-skipped' | 'autopromote-failed' | 'autopromote-policy-updated';
   rootOutputName: string;
   jobId: string;
   sourceJobId: string | null;
@@ -161,6 +168,7 @@ interface ProjectAuditLog {
 const cwd = path.resolve(__dirname, '../..');
 const outDir = path.join(cwd, 'out');
 const jobsDir = path.join(outDir, 'jobs');
+const DEFAULT_AUTO_PROMOTE_MIN_CONFIDENCE = 0.75;
 if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, {recursive: true});
 if (!fs.existsSync(jobsDir)) fs.mkdirSync(jobsDir, {recursive: true});
 
@@ -364,7 +372,8 @@ const server = http.createServer(async (req, res) => {
         return sendJson(res, 409, {error: 'job is running; wait until completion'});
       }
       const payload = await readJsonBody(req);
-      const config = resolveAutoImproveConfig(payload, job.options.strict);
+      const policy = readProjectAutoPromotePolicy(getRootOutputName(job));
+      const config = resolveAutoImproveConfig(payload, job.options.strict, policy.minConfidence);
       const result = await runAutoImproveLoop(job, config);
       if (!result.ok) {
         return sendJson(res, result.code, {error: result.error});
@@ -608,8 +617,10 @@ const server = http.createServer(async (req, res) => {
       const rootOutputName = decodeURIComponent(parts[2] || '');
       if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
       if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
+      const policy = readProjectAutoPromotePolicy(rootOutputName);
       return sendJson(res, 200, {
         rootOutputName,
+        promotionPolicy: policy,
         versions: listProjectVersions(rootOutputName),
       });
     }
@@ -638,6 +649,47 @@ const server = http.createServer(async (req, res) => {
         rootOutputName,
         updatedAt: audit.updatedAt,
         entries: audit.entries.slice(0, limit),
+      });
+    }
+
+    if (method === 'GET' && /^\/api\/projects\/[^/]+\/promotion-policy$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const rootOutputName = decodeURIComponent(parts[2] || '');
+      if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
+      if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
+      return sendJson(res, 200, {
+        rootOutputName,
+        policy: readProjectAutoPromotePolicy(rootOutputName),
+      });
+    }
+
+    if (method === 'POST' && /^\/api\/projects\/[^/]+\/promotion-policy$/.test(url.pathname)) {
+      const parts = url.pathname.split('/').filter(Boolean);
+      const rootOutputName = decodeURIComponent(parts[2] || '');
+      if (!rootOutputName) return sendJson(res, 400, {error: 'root output name is required'});
+      if (!isSafeOutputName(rootOutputName)) return sendJson(res, 400, {error: 'invalid root output name'});
+      const payload = await readJsonBody(req);
+      const metadata = readVersionMetadata(rootOutputName);
+      const previous = metadata.promotionPolicy.minConfidence;
+      const next = normalizeAutoPromoteMinConfidence(payload.minConfidence, metadata.promotionPolicy.minConfidence);
+      metadata.promotionPolicy = {
+        minConfidence: next,
+      };
+      metadata.updatedAt = new Date().toISOString();
+      writeVersionMetadata(rootOutputName, metadata);
+      appendProjectAudit(rootOutputName, {
+        type: 'autopromote-policy-updated',
+        jobId: 'policy',
+        sourceJobId: null,
+        reason: `Auto-promote min confidence set to ${next.toFixed(2)}`,
+        details: {
+          previousMinConfidence: previous,
+          minConfidence: next,
+        },
+      });
+      return sendJson(res, 200, {
+        rootOutputName,
+        policy: metadata.promotionPolicy,
       });
     }
 
@@ -836,6 +888,11 @@ function createRerenderJob(
     : sourceJob.options.voice) as JobRecord['options']['voice'];
   const strict = payload.strict === undefined ? sourceJob.options.strict : Boolean(payload.strict);
   const autoPromoteIfWinner = Boolean(payload.autoPromoteIfWinner);
+  const projectPolicy = readProjectAutoPromotePolicy(rootOutputName);
+  const autoPromoteMinConfidence = normalizeAutoPromoteMinConfidence(
+    payload.autoPromoteMinConfidence,
+    projectPolicy.minConfidence,
+  );
 
   return {
     id,
@@ -855,6 +912,7 @@ function createRerenderJob(
       scriptPath,
       sourceJobId: sourceJob.id,
       autoPromoteIfWinner,
+      autoPromoteMinConfidence,
     },
     logs: [],
   };
@@ -1044,6 +1102,7 @@ function queueVersionedRerenderFromScript(args: {
       blockerCount: qualityReport.blockers.length,
       strict: rerenderJob.options.strict,
       autoPromoteIfWinner: Boolean(rerenderJob.options.autoPromoteIfWinner),
+      autoPromoteMinConfidence: rerenderJob.options.autoPromoteMinConfidence,
     },
   });
   tickQueue();
@@ -1058,7 +1117,11 @@ function queueVersionedRerenderFromScript(args: {
   };
 }
 
-function resolveAutoImproveConfig(payload: Record<string, unknown>, defaultStrict: boolean): AutoImproveConfig {
+function resolveAutoImproveConfig(
+  payload: Record<string, unknown>,
+  defaultStrict: boolean,
+  defaultAutoPromoteMinConfidence: number,
+): AutoImproveConfig {
   const strict = payload.strict === undefined ? defaultStrict : Boolean(payload.strict);
   const defaultMaxWarnings = strict ? 0 : 3;
   return {
@@ -1072,6 +1135,10 @@ function resolveAutoImproveConfig(payload: Record<string, unknown>, defaultStric
     autoPromoteIfWinner: payload.autoPromoteIfWinner === undefined
       ? Boolean(payload.autoRerender)
       : Boolean(payload.autoPromoteIfWinner),
+    autoPromoteMinConfidence: normalizeAutoPromoteMinConfidence(
+      payload.autoPromoteMinConfidence,
+      defaultAutoPromoteMinConfidence,
+    ),
   };
 }
 
@@ -1098,6 +1165,7 @@ async function runAutoImproveLoop(
           rootOutputName: string | null;
           version: number | null;
           autoPromoteIfWinner: boolean;
+          autoPromoteMinConfidence: number;
         };
         quality: ReturnType<typeof qualitySummaryFor>;
         artifacts: ReturnType<typeof artifactsFor>;
@@ -1141,6 +1209,7 @@ async function runAutoImproveLoop(
     rootOutputName: string | null;
     version: number | null;
     autoPromoteIfWinner: boolean;
+    autoPromoteMinConfidence: number;
   } = {
     queued: false,
     reason: 'disabled',
@@ -1149,6 +1218,7 @@ async function runAutoImproveLoop(
     rootOutputName: null,
     version: null,
     autoPromoteIfWinner: config.autoPromoteIfWinner,
+    autoPromoteMinConfidence: config.autoPromoteMinConfidence,
   };
 
   for (let step = 1; step <= config.maxSteps; step++) {
@@ -1270,6 +1340,7 @@ async function runAutoImproveLoop(
         quality: job.options.quality,
         voice: job.options.voice,
         autoPromoteIfWinner: config.autoPromoteIfWinner,
+        autoPromoteMinConfidence: config.autoPromoteMinConfidence,
       },
       generationMode: 'auto-improve-validation',
       versioningSource: 'auto-improve',
@@ -1282,6 +1353,7 @@ async function runAutoImproveLoop(
       rootOutputName: queued.rootOutputName,
       version: queued.version,
       autoPromoteIfWinner: config.autoPromoteIfWinner,
+      autoPromoteMinConfidence: config.autoPromoteMinConfidence,
     };
   } else if (!config.autoRerender) {
     rerenderResult = {
@@ -1292,6 +1364,7 @@ async function runAutoImproveLoop(
       rootOutputName: null,
       version: null,
       autoPromoteIfWinner: config.autoPromoteIfWinner,
+      autoPromoteMinConfidence: config.autoPromoteMinConfidence,
     };
   } else {
     rerenderResult = {
@@ -1302,6 +1375,7 @@ async function runAutoImproveLoop(
       rootOutputName: null,
       version: null,
       autoPromoteIfWinner: config.autoPromoteIfWinner,
+      autoPromoteMinConfidence: config.autoPromoteMinConfidence,
     };
   }
 
@@ -1427,6 +1501,23 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
   return Math.min(max, Math.max(min, Math.round(parsed)));
 }
 
+function normalizeAutoPromoteMinConfidence(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return Number(Math.max(0, Math.min(1, fallback)).toFixed(2));
+  }
+  return Number(Math.max(0, Math.min(1, parsed)).toFixed(2));
+}
+
+function normalizeAutoPromotePolicy(input: unknown): AutoPromotePolicy {
+  const source = input && typeof input === 'object'
+    ? (input as {minConfidence?: unknown})
+    : {};
+  return {
+    minConfidence: normalizeAutoPromoteMinConfidence(source.minConfidence, DEFAULT_AUTO_PROMOTE_MIN_CONFIDENCE),
+  };
+}
+
 function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watchdog' | 'startup' = 'close') {
   if (job.options.mode !== 'rerender') return;
   if (!job.options.autoPromoteIfWinner) return;
@@ -1434,6 +1525,11 @@ function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watch
 
   const now = new Date().toISOString();
   const rootOutputName = getRootOutputName(job);
+  const projectPolicy = readProjectAutoPromotePolicy(rootOutputName);
+  const minConfidence = normalizeAutoPromoteMinConfidence(
+    job.options.autoPromoteMinConfidence,
+    projectPolicy.minConfidence,
+  );
   const sourceJobId = job.options.sourceJobId ?? null;
   const markEvaluation = (decision: string) => {
     job.options.autoPromoteDecision = decision;
@@ -1449,7 +1545,7 @@ function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watch
       jobId: job.id,
       sourceJobId,
       reason,
-      details: {status: job.status, source},
+      details: {status: job.status, source, minConfidence},
     });
     markEvaluation(`skipped:${reason}`);
     return;
@@ -1457,6 +1553,7 @@ function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watch
 
   const recommendation = recommendProjectVersion(rootOutputName);
   const recommendedId = recommendation.recommended?.id || null;
+  const confidence = normalizeAutoPromoteMinConfidence(recommendation.recommended?.confidence, 0);
   if (!recommendedId) {
     const reason = 'no recommendation available';
     appendLog(job, `[autopromote] skipped: ${reason}`);
@@ -1465,7 +1562,7 @@ function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watch
       jobId: job.id,
       sourceJobId,
       reason,
-      details: {source},
+      details: {source, confidence, minConfidence},
     });
     markEvaluation(`skipped:${reason}`);
     return;
@@ -1478,7 +1575,20 @@ function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watch
       jobId: job.id,
       sourceJobId,
       reason,
-      details: {recommendedId, source},
+      details: {recommendedId, source, confidence, minConfidence},
+    });
+    markEvaluation(`skipped:${reason}`);
+    return;
+  }
+  if (confidence < minConfidence) {
+    const reason = `recommendation confidence ${confidence.toFixed(2)} below threshold ${minConfidence.toFixed(2)}`;
+    appendLog(job, `[autopromote] skipped: ${reason}`);
+    appendProjectAudit(rootOutputName, {
+      type: 'autopromote-skipped',
+      jobId: job.id,
+      sourceJobId,
+      reason,
+      details: {source, confidence, minConfidence},
     });
     markEvaluation(`skipped:${reason}`);
     return;
@@ -1507,6 +1617,8 @@ function tryAutoPromoteIfRerenderWinner(job: JobRecord, source: 'close' | 'watch
       promotedVersion: promoted.promoted.version,
       promotedId: promoted.promoted.id,
       source,
+      confidence,
+      minConfidence,
     },
   });
   markEvaluation('promoted');
@@ -1694,18 +1806,25 @@ function readVersionMetadata(rootOutputName: string): VersionMetadata {
       rootOutputName: String(parsed.rootOutputName),
       updatedAt: String(parsed.updatedAt || ''),
       entries: parsed.entries as Record<string, VersionMetaEntry>,
+      promotionPolicy: normalizeAutoPromotePolicy((parsed as {promotionPolicy?: unknown}).promotionPolicy),
     };
   }
   return {
     rootOutputName,
     updatedAt: new Date(0).toISOString(),
     entries: {},
+    promotionPolicy: normalizeAutoPromotePolicy(null),
   };
 }
 
 function writeVersionMetadata(rootOutputName: string, metadata: VersionMetadata) {
   const filePath = metadataPathForRoot(rootOutputName);
   fs.writeFileSync(filePath, JSON.stringify(metadata, null, 2));
+}
+
+function readProjectAutoPromotePolicy(rootOutputName: string): AutoPromotePolicy {
+  const metadata = readVersionMetadata(rootOutputName);
+  return metadata.promotionPolicy;
 }
 
 function auditPathForRoot(rootOutputName: string): string {
@@ -2668,6 +2787,7 @@ function renderHtml() {
             <input id="autoMaxSteps" type="number" min="1" max="8" value="3" style="width:90px" title="Max auto steps" />
             <input id="autoTargetScore" type="number" min="70" max="100" value="90" style="width:110px" title="Target score" />
             <input id="autoMaxWarnings" type="number" min="0" max="12" value="1" style="width:120px" title="Max warnings" />
+            <input id="autoPromoteMinConfidence" type="number" min="0" max="1" step="0.05" value="0.75" style="width:150px" title="Auto promote min confidence" />
             <select id="autoAutofix">
               <option value="true">autofix on</option>
               <option value="false">autofix off</option>
@@ -2686,6 +2806,11 @@ function renderHtml() {
             </select>
             <button id="runAutoImprove" class="secondary">Run Auto Improve</button>
           </div>
+          <div class="row">
+            <button id="savePromotionPolicy" class="secondary">Save Promote Policy</button>
+            <button id="loadPromotionPolicy" class="secondary">Load Promote Policy</button>
+          </div>
+          <div id="promotionPolicyBox" class="quality-box muted">No promotion policy loaded.</div>
           <div id="fixPlanBox" class="quality-box muted">No section improvement plan yet.</div>
           <div id="autoImproveBox" class="quality-box muted">No auto-improve run yet.</div>
           <div class="row">
@@ -2755,6 +2880,7 @@ function renderHtml() {
   const rootOutputField = document.getElementById('rootOutputName');
   const versionsList = document.getElementById('versionsList');
   const recommendationBox = document.getElementById('recommendationBox');
+  const promotionPolicyBox = document.getElementById('promotionPolicyBox');
   const fixPlanBox = document.getElementById('fixPlanBox');
   const autoImproveBox = document.getElementById('autoImproveBox');
   const auditBox = document.getElementById('auditBox');
@@ -2774,6 +2900,7 @@ function renderHtml() {
   let currentVersions = [];
   let currentRecommendation = null;
   let currentFixPlan = null;
+  let currentPromotionPolicy = null;
 
   function setStatus(text, kind='') {
     status.textContent = text;
@@ -2904,6 +3031,28 @@ function renderHtml() {
     qualityBox.className = report.passed ? 'quality-box ok' : 'quality-box bad';
   }
 
+  function readAutoPromoteMinConfidenceInput() {
+    const raw = Number(byId('autoPromoteMinConfidence').value);
+    if (!Number.isFinite(raw)) return 0.75;
+    return Math.max(0, Math.min(1, Math.round(raw * 100) / 100));
+  }
+
+  function renderPromotionPolicy(policy, sourceText) {
+    if (!policy || typeof policy.minConfidence !== 'number') {
+      currentPromotionPolicy = null;
+      promotionPolicyBox.className = 'quality-box muted';
+      promotionPolicyBox.textContent = 'No promotion policy loaded.';
+      return;
+    }
+    currentPromotionPolicy = policy;
+    byId('autoPromoteMinConfidence').value = String(policy.minConfidence.toFixed(2));
+    promotionPolicyBox.className = 'quality-box';
+    promotionPolicyBox.textContent = [
+      'Auto-promote min confidence: ' + policy.minConfidence.toFixed(2),
+      sourceText || 'Policy source: project setting',
+    ].join('\\n');
+  }
+
   function setCurrentRoot(rootOutputName) {
     currentRootOutputName = String(rootOutputName || '').trim();
     rootOutputField.value = currentRootOutputName;
@@ -2972,6 +3121,7 @@ function renderHtml() {
       versionsList.className = 'versions-list muted';
       versionsList.textContent = 'No project root selected yet.';
       renderVersionOptions([]);
+      renderPromotionPolicy(null, '');
       return;
     }
     const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/versions');
@@ -2980,6 +3130,11 @@ function renderHtml() {
       versionsList.className = 'versions-list bad';
       versionsList.textContent = data.error || 'Failed to load versions';
       return;
+    }
+    if (data.promotionPolicy) {
+      renderPromotionPolicy(data.promotionPolicy, 'Policy source: versions snapshot');
+    } else {
+      await fetchPromotionPolicy();
     }
     renderVersionsList(data.versions || []);
   }
@@ -3029,6 +3184,48 @@ function renderHtml() {
       if (leftCandidate.videoUrl) videoLeft.src = leftCandidate.videoUrl;
     }
     setOutput(data);
+    return data;
+  }
+
+  async function fetchPromotionPolicy() {
+    if (!currentRootOutputName) {
+      renderPromotionPolicy(null, '');
+      return null;
+    }
+    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/promotion-policy');
+    const data = await res.json();
+    if (!res.ok) {
+      promotionPolicyBox.className = 'quality-box bad';
+      promotionPolicyBox.textContent = data.error || 'Promotion policy fetch failed';
+      return null;
+    }
+    renderPromotionPolicy(data.policy, 'Policy source: project setting');
+    return data;
+  }
+
+  async function savePromotionPolicy() {
+    if (!currentRootOutputName) {
+      setStatus('No project root selected', 'bad');
+      return null;
+    }
+    const minConfidence = readAutoPromoteMinConfidenceInput();
+    const res = await fetch('/api/projects/' + encodeURIComponent(currentRootOutputName) + '/promotion-policy', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({minConfidence})
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('Save promotion policy failed', 'bad');
+      promotionPolicyBox.className = 'quality-box bad';
+      promotionPolicyBox.textContent = data.error || 'Save promotion policy failed';
+      setOutput(data);
+      return null;
+    }
+    renderPromotionPolicy(data.policy, 'Policy source: saved to project');
+    setStatus('Promotion policy saved', 'ok');
+    setOutput(data);
+    await fetchAudit();
     return data;
   }
 
@@ -3307,7 +3504,8 @@ function renderHtml() {
     const payload = {
       quality: document.getElementById('quality').value,
       strict: document.getElementById('strict').value === 'true',
-      voice: 'none'
+      voice: 'none',
+      autoPromoteMinConfidence: readAutoPromoteMinConfidenceInput()
     };
     const res = await fetch('/api/jobs/' + currentId + '/rerender', {
       method: 'POST',
@@ -3397,6 +3595,7 @@ function renderHtml() {
     if (data.rerender) {
       lines.push('Rerender: ' + (data.rerender.queued ? ('queued ' + data.rerender.id + ' (v' + data.rerender.version + ')') : data.rerender.reason));
       lines.push('Auto promote if winner: ' + String(Boolean(data.rerender.autoPromoteIfWinner)));
+      lines.push('Auto promote min confidence: ' + String(data.rerender.autoPromoteMinConfidence));
     }
     if (data.iterations.length > 0) {
       lines.push('Iterations:');
@@ -3420,7 +3619,8 @@ function renderHtml() {
       autofix: document.getElementById('autoAutofix').value === 'true',
       autoRerender: document.getElementById('autoRerender').value === 'true',
       rerenderStrict: document.getElementById('autoRerenderStrict').value === 'true',
-      autoPromoteIfWinner: document.getElementById('autoPromoteIfWinner').value === 'true'
+      autoPromoteIfWinner: document.getElementById('autoPromoteIfWinner').value === 'true',
+      autoPromoteMinConfidence: readAutoPromoteMinConfidenceInput()
     };
     setStatus('Running auto improve...', 'muted');
     const res = await fetch('/api/jobs/' + currentId + '/auto-improve', {
@@ -3492,6 +3692,7 @@ function renderHtml() {
     currentScript = null;
     currentRecommendation = null;
     currentFixPlan = null;
+    currentPromotionPolicy = null;
     setCurrentRoot(data.rootOutputName || '');
     currentJobIdField.value = currentId;
     domainPackField.value = '';
@@ -3503,6 +3704,8 @@ function renderHtml() {
     fixPlanBox.textContent = 'No section improvement plan yet.';
     autoImproveBox.className = 'quality-box muted';
     autoImproveBox.textContent = 'No auto-improve run yet.';
+    promotionPolicyBox.className = 'quality-box muted';
+    promotionPolicyBox.textContent = 'No promotion policy loaded.';
     auditBox.className = 'quality-box muted';
     auditBox.textContent = 'No automation audit yet.';
     compareBox.className = 'quality-box muted';
@@ -3576,6 +3779,14 @@ function renderHtml() {
 
   document.getElementById('refreshAudit').addEventListener('click', async () => {
     await fetchAudit();
+  });
+
+  document.getElementById('savePromotionPolicy').addEventListener('click', async () => {
+    await savePromotionPolicy();
+  });
+
+  document.getElementById('loadPromotionPolicy').addEventListener('click', async () => {
+    await fetchPromotionPolicy();
   });
 
   document.getElementById('recommendFixes').addEventListener('click', async () => {

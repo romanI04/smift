@@ -55,6 +55,8 @@
 - `auto-improve` supports optional auto-rerender when loop reaches target (`autoRerender=true`, optional `rerenderStrict`).
 - `auto-improve` also supports `autoPromoteIfWinner`: rerender is promoted automatically only if that rerender is recommendation winner at completion time.
 - Use `GET /api/projects/:rootOutputName/audit` to inspect rerender queue and auto-promote outcomes (`promoted`/`skipped`/`failed`).
+- Use `GET/POST /api/projects/:rootOutputName/promotion-policy` to control auto-promote confidence threshold per project root.
+- `auto-improve` now accepts `autoPromoteMinConfidence`; rerenders only auto-promote when recommendation confidence clears that threshold.
 - Use `GET /api/jobs/:id/compare?other=<jobId>` for quick quality/script delta summary.
 - Use `GET /api/jobs/:id/video` for preview playback in local compare panels.
 - Pinning a version now automatically unarchives it; archiving a version automatically unpins it.

@@ -145,7 +145,8 @@ Scope:
     - optional auto-rerender trigger on publish-threshold is now implemented.
     - auto-promote-if-winner after auto-rerender is now implemented.
     - background watch mode + persistent promotion audit trail are now implemented.
-    - next priority is configurable promotion policy thresholds (e.g. minimum confidence before auto-promote).
+    - configurable promotion policy thresholds (minimum recommendation confidence for auto-promote) are now implemented.
+    - next priority is threshold calibration by segment (core-icp vs broad) using accepted/rejected outcomes.
 
 ## 5) Non-Negotiable Prioritization Rules
 

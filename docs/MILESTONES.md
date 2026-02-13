@@ -1,5 +1,20 @@
 # Milestones
 
+## 2026-02-13
+
+### M34 - Configurable Auto-Promote Confidence Policy
+
+- Added project-level promotion policy persistence (`minConfidence`) in version metadata.
+- Added API endpoints:
+  - `GET /api/projects/:rootOutputName/promotion-policy`
+  - `POST /api/projects/:rootOutputName/promotion-policy`
+- Added UI controls in local runner to load/save promotion policy and set auto-promote minimum confidence.
+- Extended rerender/auto-improve flow to carry `autoPromoteMinConfidence` into queued rerender jobs.
+- Hardened auto-promote evaluator:
+  - promotion now requires recommendation confidence >= configured threshold
+  - skip reasons + threshold/confidence context are written to promotion audit trail.
+- Added policy-update events to project audit stream for operator traceability.
+
 ## 2026-02-12
 
 ### M1 - Quality Gate + Autofix
